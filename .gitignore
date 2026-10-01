@@ -2,10 +2,18 @@
 .Rhistory
 .RData
 .Ruserdata
-dataTanaka/
-biomarker_uncertainty.Rproj
-.DS_Store
-todo.txt
-AT_Model_Comparison/
+
 .venv/
 __pycache__/
+*.pyc
+
+
+.DS_Store
+
+dataTanaka/
+
+# https://github.com/KCGallagher/AT_Model_Comparison
+AT_Model_Comparison/
+
+todo
+

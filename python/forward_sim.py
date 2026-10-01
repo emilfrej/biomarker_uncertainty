@@ -1,12 +1,13 @@
 # Forward simulation wrapper around Kit Gallagher's Lotka-Volterra model (AT_Model_Comparison).
-# Callable from Python directly, or from R via reticulate::source_python("forward_sim.py").
+# Callable from Python directly, or from R via reticulate::source_python("python/forward_sim.py").
 import os
 import sys
 
 import numpy as np
 import pandas as pd
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "AT_Model_Comparison", "utils"))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # this file lives in python/
+sys.path.append(os.path.join(_PROJECT_ROOT, "AT_Model_Comparison", "utils"))
 from odeModels import LotkaVolterraModel
 
 

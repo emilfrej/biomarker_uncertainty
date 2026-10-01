@@ -10,6 +10,13 @@ for tomorrow:
 See if I get the same results
 
 
+```{r setup, include=FALSE}
+# This .Rmd lives in R/; evaluate all chunks relative to the project root so
+# paths like ./.venv and python/forward_sim.py resolve consistently whether
+# knitting or running interactively in the RStudio project.
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
 ```{r}
 pacman::p_load(deSolve, tidyverse, testthat)
 ```
@@ -144,7 +151,7 @@ Python reference simulator
 ```{r}
 library(reticulate)
 use_virtualenv("./.venv", required = TRUE)
-source_python("forward_sim.py") 
+source_python("python/forward_sim.py")
 
 py_params <- list(rS = rS, rR = rR,  dS = d, dR = d, dD = dD, K = K, S0 = S0, R0 = R0, DMax = 1)
 
