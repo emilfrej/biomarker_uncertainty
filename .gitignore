@@ -5,3 +5,7 @@
 dataTanaka/
 biomarker_uncertainty.Rproj
 .DS_Store
+todo.txt
+AT_Model_Comparison/
+.venv/
+__pycache__/
