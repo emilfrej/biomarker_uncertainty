@@ -1,0 +1,30 @@
+---
+title: "simulate_n_bruschowsky_patients"
+output: html_document
+---
+
+```{r}
+pacman::p_load(deSolve, tidyverse, testthat, here)
+source(here::here("R/functions.R"))
+```
+
+```{r}
+set.seed(1)
+
+sigma = 0.025
+
+best_fits <- get_n_best_fits(3)
+
+top_n_sims <- simulate_patients(best_fits, sigma = sigma)
+
+top_n_sims_long <- top_n_sims |>
+  pivot_longer(cols = c(PSA_simulated, PSA_observed), values_to= "PSA", names_to = "metric") 
+
+ggplot(top_n_sims_long, aes(x=time, y=PSA, color = metric)) +
+  geom_point() +
+  facet_wrap(~PatientID)
+
+
+
+```
+
