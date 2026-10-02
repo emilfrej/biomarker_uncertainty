@@ -1,4 +1,4 @@
-Generative assumptions:
+Generative assumptions for simulator:
 Treatment decisions are taken directly from trial.
 No hierarchichal structure to patient data. 
 Follows ODE structure

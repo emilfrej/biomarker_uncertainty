@@ -7,7 +7,9 @@ Is it important which ODE solver I use in R?
 should I construct a test for the ODE
 
 for tomorrow:
-See if I get the same results
+See if simulator gets same results as trial
+Start to simulate a couple of patients
+
 
 
 ```{r setup, include=FALSE}
@@ -45,10 +47,10 @@ S0 = N0 * (1-R0_coef)
 Starting_state = c(S = S0, R = R0)
 
 #time res for segments 
-ode_res = 0.01
+ode_res = 1
 
 #noise param
-sigma <- 0.025
+sigma <- 0.0025
 
 
 ```
@@ -57,12 +59,25 @@ sigma <- 0.025
 Helper functions
 ```{r}
 
-Pars = c(rS = rS, rR = rR, d=d, dD = dD, K = K, N0 = N0, R0 = R0, D = 1) #named vec for params
+
+#get n best fits from Strobl fit 
+get_n_best_fits <- function(n){
+  strobl_fit_results <- read_csv("AT_costOfResistance_LVModel/data/fits/4params/fitSummaryDf.csv") 
+  
+  top_n_fits <- strobl_fit_results |> 
+    arrange(desc(RSquared)) |> 
+    head(n) |> 
+    select(PatientId, RSquared, R0, S0, dR, dS, n0, rR, turnover, cost)
+}
+
+
 
 lotka_voltera_ode <- function(Time, State, Pars){
   
-  #construct a tempory list of state variables and state pars to evalute nex lines
+  
+  #construct a temporary list of state variables and state pars to evaluate nex lines
   with(as.list(c(State, Pars)), {
+    
     
     dSdt <- rS*S * (1 - ((S+R) / K)) * (1 - dD*D) - d*S #derivative of sensitives
     dRdt <- rR*R * (1 - ((S+R) / K)) - d*R  #derivative of resistant
@@ -126,7 +141,114 @@ forward_sim_single_patient <- function(Pars, starting_state, Schedule){
 
 ```
 
+```{r}
+get_n_best_fits <- function(n){
+  strobl_fit_results <- read_csv("AT_costOfResistance_LVModel/data/fits/4params/fitSummaryDf.csv") 
+  
+  top_n_fits <- strobl_fit_results |> 
+    arrange(desc(RSquared)) |> 
+    head(n) |> 
+    select(PatientId, RSquared, R0, S0, dR, dS, n0, rR, turnover, cost)
+}
 
+
+load_bruchowsky_patients <- function(patient_ids){
+
+    out_list <- list()
+    for (id in patient_ids){
+      
+      file_path <- paste0("dataTanaka/Bruchovsky_et_al/", sprintf("patient%03d.txt", id))
+
+      #load in the df and clean
+      patient_data <- read_csv(file_path, col_names = FALSE) |>
+        rename(PatientID = 1, Date = 2, CPA = 3, LEU = 4, PSA = 5, Testosterone = 6, CycleId = 7, DrugConcentration = 8) |>
+        mutate(Date = ymd_hms(Date)) |>
+        arrange(Date) |>                                
+        mutate(Time    = X9 - first(X9), #elapsed time like strobl python loader
+               PSA_raw = PSA,     #normalise
+               PSA     = PSA_raw / first(PSA_raw))
+
+      #store the whole df as one list element
+      out_list[[as.character(id)]] <- patient_data
+    }
+
+    return(out_list)
+}
+
+best_three_fits <- get_n_best_fits(3)
+
+patient_list <- load_bruchowsky_patients(best_three_fits$PatientId)
+
+#build schedule from PatientID 
+build_treatment_schedule <- function(patient_data) {
+  
+    df <- patient_data |> arrange(Time)
+    
+    df |>
+      mutate(segment = consecutive_id(DrugConcentration)) |>   
+      group_by(segment) |>
+      summarise(start = first(Time),
+                dose  = first(DrugConcentration),
+                .groups = "drop") |>
+      mutate(end = lead(start, default = max(df$Time))) |>       
+      select(start, end, dose)
+  
+}
+
+#build schedule
+best_fit_patient_data <- patient_list[[1]]
+
+schedule <- build_treatment_schedule(best_fit_patient_data)
+
+#build pars
+best_fit_params <- head(best_three_fits, 1)
+pars = c(rS = 0.027, rR = best_fit_params$rR,  dS = best_fit_params$dS, dD = 1.5, K = 1)
+
+#get starting state
+Starting_state <- c(S = best_fit_params$S0, R = best_fit_params$R0)
+
+patient_list[[1]] |> 
+  ggplot(aes(x=Time, y = DrugConcentration)) +
+  geom_point() +
+  geom_vline(data = schedule, aes(xintercept = end))
+
+
+```
+
+
+look up param estimates
+```{r}
+
+pars = c(rS = 0.027, rR = best_fit_params$rR,  dS = best_fit_params$dS, dD = 1.5, K = 1)
+Starting_state <- c(S = best_fit_params$S0, R = best_fit_params$R0)
+
+sim_trajec <- forward_sim_single_patient(Pars = pars, starting_state = Starting_state, schedule=)
+
+ggplot(sim_trajec, aes(x=time, y = N)) +
+  geom_path() +
+  geom_point(data=best_fit_patient_data, aes(x=Time, y=PSA))
+
+
+
+
+```
+
+```{r}
+library(reticulate)
+use_virtualenv("./.venv", required = TRUE)
+source_python("python/forward_sim.py")
+
+schedule <- build_treatment_schedule(best_fit_patient_data)
+
+py_params <- list(rS = 0.027, rR = best_fit_params$rR,  dS = best_fit_params$dS, dR = best_fit_params$dR, dD = 1.5, K = 1, S0 = best_fit_params$S0, R0 = best_fit_params$R0, DMax = 1)
+
+py_out <- run_forward_sim(py_params, schedule, dt = ode_res)
+
+ggplot(py_out, aes(x=Time, y = S+R)) +
+  geom_path() +
+  geom_point(data=best_fit_patient_data, aes(x=Time, y=PSA))
+
+```
 
 
 single patient forward simulation
