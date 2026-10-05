@@ -1,3 +1,4 @@
+pacman::p_load(tidyverse, deSolve)
 
 #get n best fits from Strobl fit
 get_n_best_fits <- function(n){
@@ -9,9 +10,23 @@ get_n_best_fits <- function(n){
     select(PatientId, RSquared, R0, S0, dR, dS, n0, rR, turnover, cost)
 }
 
+#params and starting state from strobl fit
+get_params_and_state <- function(patient_id, strobl_fits){
+  
+  patient_row <- strobl_fits |> 
+    filter(PatientId == patient_id)
+  
+  params <- c(rS = patient_row$rS, rR = patient_row$rR, d=patient_row$dR, K = patient_row$k, dD = patient_row$dD)
+  starting_state = c(S=patient_row$S0, R=patient_row$R0)
+  
+  return(list(params=params, starting_state=starting_state))
+}
 
-#ODE system that describes tumour trajectory
+
+#ODE system that describes tumour trajectory.
+# Takes State = c(S, R) and Pars = c(rS, rR, K, dD, D, d)
 lotka_voltera_ode <- function(Time, State, Pars){
+  
 
   #construct a temporary list of state variables and state pars to evaluate nex lines
   with(as.list(c(State, Pars)), {
@@ -114,35 +129,38 @@ build_treatment_schedule <- function(patient_data) {
                 dose  = first(DrugConcentration),
                 .groups = "drop") |>
       mutate(end = lead(start, default = max(df$Time))) |>
-      select(start, end, dose)
+      select(start, end, dose) |>
+      filter(end > start) #drop zero-length segment when dose changes at last measurement
 
 }
 
 #function for simulating a set of patients
-simulate_patients <- function(best_fit_params, sigma){
-
-  #get bruchowsky patients
-  patient_data_list <- load_bruchowsky_patients(best_fit_params$PatientId)
-
+simulate_best_strobl_fits <- function(sigma, n){
+  
+  strobl_fits <- read_csv(here::here("AT_costOfResistance_LVModel/data/fits/4params/fitSummaryDf.csv"))
+  
+  top_ids <- strobl_fits |> 
+    arrange(desc(RSquared)) |> 
+    head(n) |> 
+    pull(PatientId)
+  
+  clinical_data_list <- load_bruchowsky_patients(top_ids)
+  
   out_list <- list()
-
-  #loop over all entries in in best fits
-  for (i in 1:nrow(best_fit_params)){
-    params <- c(rS = 0.027, rR = best_fit_params$rR[i], d = best_fit_params$dS[i], dD = 1.5, K = 1)
-    starting_state <- c(S = best_fit_params$S0[i], R = best_fit_params$R0[i])
-    PatientId <- best_fit_params$PatientId[i]
-    patient_data <- patient_data_list[[as.character(PatientId)]] #get right data from list of bruchowsky dfs
-    treatment_schedule <- build_treatment_schedule(patient_data)
-
-    #simulate and store
-    simulated_trajectory <- forward_sim_single_patient(pars=params, starting_state = starting_state, schedule = treatment_schedule, sigma = sigma) |>
-      right_join(patient_data, by = join_by(time==Time), suffix = c("_simulated","_observed")) #only keeps obs for when observations were made
-
+  
+  # simulate data_sets for top_n best patients
+  for (i in (1:n)){
+    patient_id <- top_ids[i]
+    state_params <- get_params_and_state(patient_id = patient_id, strobl_fits = strobl_fits)
+    clinical_data <- clinical_data_list[[as.character(patient_id)]] # get the clinical data for id
+    treatment_schedule <- build_treatment_schedule(clinical_data)
+    #sim the trajectory and keep only timepoints in the actual data where a PSA measurement is present
+    simulated_trajectory <- forward_sim_single_patient(pars=state_params$params, starting_state = state_params$starting_state, schedule = treatment_schedule, sigma = sigma) |>
+      right_join(clinical_data, by = join_by(time==Time), suffix = c("_simulated","_observed")) |> 
+      filter(!is.na(PSA_observed))
     out_list[[i]] <- simulated_trajectory
-
   }
-
   out_df = bind_rows(out_list)
   return(out_df)
-
 }
+

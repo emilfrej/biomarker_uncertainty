@@ -1,5 +1,5 @@
 ---
-title: "single_patient_forward_sim"
+title: ""
 output: html_document
 ---
 Question list: 
@@ -7,8 +7,7 @@ Is it important which ODE solver I use in R?
 should I construct a test for the ODE
 
 for tomorrow:
-See if simulator gets same results as trial
-Start to simulate a couple of patients
+Start to simulate a couple of patients. 
 
 
 
@@ -87,36 +86,7 @@ patient_list[[1]] |>
 ```
 
 
-look up param estimates
-```{r}
 
-pars = c(rS = 0.027, rR = best_fit_params$rR,  d = best_fit_params$dS, dD = 1.5, K = 1)
-starting_state <- c(S = best_fit_params$S0, R = best_fit_params$R0)
-
-sim_trajec <- forward_sim_single_patient(pars = pars, starting_state = starting_state, schedule=schedule)
-
-ggplot(sim_trajec, aes(x=time, y = N_non_normalized)) +
-  geom_point(data=best_fit_patient_data, aes(x=Time, y=PSA))
-
-
-
-
-#build dataset with observations only at bruchowsky times
-sim_psa_obs <- best_fit_patient_data |> 
-  filter(!is.na(PSA)) |> 
-  left_join(sim_trajec,by = join_by(Time == time), suffix = c("_observed", "_simulated")) |> 
-  pivot_longer(cols=c(PSA_observed, PSA_simulated), names_to = "metric", values_to = "PSA_normalized") 
-
-ggplot(sim_psa_obs, aes(x=Time, y=PSA_normalized, color=metric)) +
-  geom_point()
-
-
-
-
-
-
-
-```
 
 loop analysis over top 3 patients
 ```{r}
@@ -135,6 +105,41 @@ ggplot(top_n_sims_long, aes(x=time, y=PSA, color = metric)) +
 
 
 
+closed-loop simulator vs actual data, top 5 patients
+```{r}
+best5     <- get_n_best_fits(5)
+patients5 <- load_bruchowsky_patients(best5$PatientId)
+
+for (i in 1:nrow(best5)) {
+  pid      <- best5$PatientId[i]
+  pdat     <- patients5[[as.character(pid)]]
+  baseline <- first(pdat$PSA_raw)
+  t_max    <- max(pdat$Time)
+
+  pars <- c(rS = 0.027, rR = best5$rR[i], d = best5$dS[i], dD = 1.5, K = 1)
+  init <- c(S = best5$S0[i], R = best5$R0[i])
+
+  sim <- simulate_closed_loop(pars, init, baseline, t_max = t_max, meas_sigma = 2)
+
+  #simulated treatment-ON blocks for shading
+  blocks <- sim |>
+    mutate(seg = consecutive_id(D)) |>
+    group_by(seg) |>
+    summarise(start = first(time), end = last(time), dose = first(D), .groups = "drop") |>
+    filter(dose == 1)
+
+  print(
+    ggplot() +
+      geom_rect(data = blocks, aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+                fill = "grey75", alpha = 0.5) +
+      geom_line(data = sim, aes(time, PSA_raw_sim), color = "steelblue", linewidth = 0.7) +
+      geom_point(data = pdat, aes(Time, PSA_raw), size = 1.3) +
+      labs(title = paste0("Patient ", pid, " (R2 = ", round(best5$RSquared[i], 2), ")"),
+           subtitle = "grey = simulated treatment ON", x = "Days", y = "PSA (ug/L)") +
+      theme_minimal()
+  )
+}
+```
 
 ```{r}
 

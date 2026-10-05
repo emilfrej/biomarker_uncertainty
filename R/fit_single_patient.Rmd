@@ -1,0 +1,68 @@
+---
+title: "fit_single_patient"
+output: html_document
+---
+
+```{r}
+pacman::p_load(cmdstanr, tidyverse)
+source("functions.R")
+set.seed(1)
+```
+
+
+
+load in data sim_data
+```{r}
+#best fitting strobl patient and its fitted params (the "true" values for the simulation)
+true_params <- get_n_best_fits(1)
+patient_id  <- true_params$PatientId
+
+sim_data <- simulate_best_strobl_fits(n=1, sigma=.025) |>
+  pivot_longer(cols = c(PSA_simulated, PSA_observed), names_to="Metric", values_to="PSA") |>
+  filter(Metric == "PSA_observed")
+
+
+```
+prep it for stan
+```{r}
+#treatment indicator: one 0/1 value per day, built from the full clinical data (incl. rows with missing PSA)
+clinical_data <- load_bruchowsky_patients(patient_id)[[as.character(patient_id)]]
+sched <- build_treatment_schedule(clinical_data)
+
+treatment_indicator <- rep(sched$dose, times = sched$end - sched$start)
+treatment_indicator <- c(treatment_indicator, tail(treatment_indicator, 1)) #cover the last day
+
+
+#observations: drop t = 0, since ode times must be after the starting time
+obs <- sim_data |> filter(time > 0)
+
+stan_data <- list(
+  N                   = nrow(obs),
+  measurement_times   = obs$time,
+  PSA_norm            = obs$PSA,
+  T                   = length(treatment_indicator),
+  treatment_indicator = as.integer(treatment_indicator),
+  rS = 0.027, K = 1, dD = 1.5
+)
+```
+
+fit model
+```{r}
+mod <- cmdstan_model(here::here("stan/prototype_model.stan"))
+
+fit <- mod$sample(data = stan_data, chains = 4, parallel_chains = 4, seed = 1)
+```
+
+diagnostics
+```{r}
+fit$diagnostic_summary()
+
+fit$summary(c("cost", "turnover", "n0", "rFrac", "sigma"))
+
+#compare against the strobl values used to simulate the data
+true_params |>
+  mutate(rFrac = R0 / (S0 + R0)) |>
+  select(cost, turnover, n0, rFrac)
+```
+
+

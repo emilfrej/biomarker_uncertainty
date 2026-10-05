@@ -18,3 +18,6 @@ AT_Model_Comparison/
 todo
 
 AT_costOfResistance_LVModel/
+sbc_swithc_lookup*
+sbc_single_patient.Rmd
+Rplots.pdf
