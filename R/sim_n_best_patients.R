@@ -1,3 +1,5 @@
+### For quickly plotting simulated norm PSA against actual values for best fitting patients according to Strobl et al's analysis
+
 source("R/functions.R")
 set.seed(1)
 

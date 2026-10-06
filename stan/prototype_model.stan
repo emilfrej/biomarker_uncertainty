@@ -1,8 +1,7 @@
 functions {
   int look_up_treatment(real t, array[] int treatment){
 
-
-    // find out what integer timepoint t corresponds to
+    // find out what integer timepoint n_days corresponds to
     int day = 1; //will since treatment[1] gives the first observation
     while (day <= t){
       day += 1;
@@ -29,7 +28,6 @@ functions {
     //look up treatment at time t
     int D_t = look_up_treatment(t, D);
     
-
     vector[2] dy_dt;
     dy_dt[1] = rS * S * (1 - (S + R) / K) * (1 - dD * D_t) - dS * S;
     dy_dt[2] = rR * R * (1 - (S + R) / K) - dR * R;
@@ -38,16 +36,25 @@ functions {
 }
 
 data {
-  int<lower=0> N; // number of obs
-  array[N] real <lower=0> measurement_times; //#day of observation, must be > 0
-  array[N] real PSA_norm; //
-  int<lower=1> T; // number of days in treatment indicator
-  array[T] int <lower=0,upper=1> treatment_indicator; //one value per day 0
+  int<lower=0> n_obs; // number of obs
+  array[n_obs] real <lower=0> measurement_times; //#day of observation, must be > 0
+  array[n_obs] real PSA_norm; //
+  int<lower=1> n_days; // number of days in treatment indicator
+  array[n_days] int <lower=0,upper=1> treatment_indicator; //one value per day 0
   
   //fixed params
   real <lower=0, upper=1> rS;
   real <lower=0, upper=1> K;
   real <lower=0> dD;
+  
+  //priors
+    vector[2] cost_prior; // beta(a, b)
+    vector[2] turnover_prior; // beta(a, b)
+    vector[2] n0_prior; // beta(a, b)
+    vector[2] rFrac_prior; // beta(a, b)
+    vector[2] sigma_prior; //lognormal(mu, sigma)
+  
+  int<lower=0, upper=1> run_diagnostics; //1 for log like and joint prior evalutation
 }
 
 parameters {
@@ -77,21 +84,40 @@ transformed parameters{
   theta[5] = dR;
   theta[6] = K;
   
-  array[N] vector[2] cell_populations = ode_rk45(dpop_dt, starting_state, 0, measurement_times, theta, treatment_indicator);
+  array[n_obs] vector[2] cell_populations = ode_rk45(dpop_dt, starting_state, 0, measurement_times, theta, treatment_indicator);
   
   // get sum of cell pops at each time and normalize by initial cell amount
-  vector[N] mu;
-  for (n in 1:N) mu[n] = sum(cell_populations[n]) / (n0 * K);
+  vector[n_obs] mu;
+  for (i in 1:n_obs){
+    mu[i] = sum(cell_populations[i]) / (n0 * K);
+  }
 }
 
 model {
   //priors
-  cost     ~ beta(1, 1);
-  turnover ~ beta(2, 5);
-  n0       ~ beta(1, 1);  
-  rFrac    ~ beta(1, 30);
-  sigma    ~ lognormal(-2, 1);
-  
+  cost     ~ beta(cost_prior[1], cost_prior[2]);
+  turnover ~ beta(turnover_prior[1], turnover_prior[2]);
+  n0       ~ beta(n0_prior[1], n0_prior[2]);  
+  rFrac    ~ beta(rFrac_prior[1], rFrac_prior[2]);
+  sigma    ~ lognormal(sigma_prior[1], sigma_prior[2]);
   PSA_norm ~ normal(mu, sigma);
+}
+
+generated quantities{
+  real lprior;
+  vector[n_obs] log_lik;
+  //if flag is on, then calc the log probability of each draw (all param values) given the prior. 
+  //used for prior sensitivity analysis
+  if (run_diagnostics == 1){
+    lprior = beta_lpdf(cost|cost_prior[1], cost_prior[2]) +
+              beta_lpdf(turnover|turnover_prior[1], turnover_prior[2]) +
+              beta_lpdf(n0|n0_prior[1], n0_prior[2]) +
+              beta_lpdf(rFrac|rFrac_prior[1], rFrac_prior[2]) +
+              lognormal_lpdf(sigma|sigma_prior[1], sigma_prior[2]);
+    // for each observation compute the log likelihood of making that observation, used for model comp and sens analysis
+    for (i in 1:n_obs){
+      log_lik[i] = normal_lpdf(PSA_norm[i]| mu[i], sigma);
+    }
+  }
 }
 

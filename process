@@ -1,0 +1,21 @@
+build a forward simulator:
+ - partly to understand that I understood the assumed model correctly 
+ - and then as tool to know what what parameter values makes the sampler break down
+ - it could also be used to examine the implications that a given selection of priors have
+ - open question is how to extend this to hierarchichal and whether or not to implement treatment decision in original trial
+ - there is a check that you can run to see if your forward simulator and model fitting pipeline encodes the same mathematical model
+ 
+build the stan model 
+ - so we can sample parameter values given the priors and the data. Yields a few thousand samples of parameter vals to be used for estimating biomarkers.
+ - used all observations currently. 
+ - make it not breakdown. Coded it simply, but the sampler breaks down with some patients currently. It's also pretty slow. Some combination of the chosen priors, sampling statements, and sampler settings. 
+ - haven't examined sensitivy of priors.
+ - the check
+ 
+future: 
+- make estimates rel
+- find out how to extend the model so we use information from other patients to inform estimates for a new patient.
+
+
+Probably a good idea to make sure I know turnover, cost, n0 and rFrac
+ 

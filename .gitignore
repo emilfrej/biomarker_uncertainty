@@ -18,6 +18,15 @@ AT_Model_Comparison/
 todo
 
 AT_costOfResistance_LVModel/
-sbc_swithc_lookup*
+Mathematical-Biomarkers-main/
+fits/
+
+
 sbc_single_patient.Rmd
 Rplots.pdf
+
+stan/*
+!stan/*.stan
+
+sbc_switch_lookup*
+

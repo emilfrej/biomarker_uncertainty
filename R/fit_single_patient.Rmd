@@ -23,6 +23,21 @@ sim_data <- simulate_best_strobl_fits(n=1, sigma=.025) |>
 
 
 ```
+
+
+setup priors
+```{r}
+priors <- list(
+    cost_prior     = c(1, 1),
+    turnover_prior = c(2, 5),
+    n0_prior       = c(1, 1),
+    rFrac_prior    = c(1, 30),
+    sigma_prior    = c(-2, 1)
+  )
+
+```
+
+
 prep it for stan
 ```{r}
 #treatment indicator: one 0/1 value per day, built from the full clinical data (incl. rows with missing PSA)
@@ -31,19 +46,30 @@ sched <- build_treatment_schedule(clinical_data)
 
 treatment_indicator <- rep(sched$dose, times = sched$end - sched$start)
 treatment_indicator <- c(treatment_indicator, tail(treatment_indicator, 1)) #cover the last day
-
+treatment_indicator <- as.integer(treatment_indicator)
 
 #observations: drop t = 0, since ode times must be after the starting time
 obs <- sim_data |> filter(time > 0)
 
 stan_data <- list(
-  N                   = nrow(obs),
-  measurement_times   = obs$time,
-  PSA_norm            = obs$PSA,
-  T                   = length(treatment_indicator),
-  treatment_indicator = as.integer(treatment_indicator),
-  rS = 0.027, K = 1, dD = 1.5
+  n_obs = nrow(obs),
+  measurement_times= obs$time,
+  PSA_norm = obs$PSA,
+  n_days = length(treatment_indicator),
+  treatment_indicator = treatment_indicator,
+  #fixed vals
+  rS = 0.027, 
+  K = 1, 
+  dD = 1.5,
+  #misc
+  run_diagnostics = 0
 )
+
+#add priors
+stan_data <- c(stan_data, priors)
+
+
+
 ```
 
 fit model
