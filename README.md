@@ -36,6 +36,10 @@ stories you could tell:
   - simulate values from normed / non_normed values and see how identifiable they are. 
   - relax fixed values / non-dimensionality
   
+Notes:
+Maybe doing all of this in python would have been easier. Given all the work kit and strobl has already done. There would have been a lot of functions I could have reused. But then the stan stuff I'm familiar with in R.
+
+
   
   
 

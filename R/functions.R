@@ -165,7 +165,7 @@ simulate_best_strobl_fits <- function(sigma, n){
 }
 
 #function for building a fit path from a patient Id
-make_fit_path <- function(patient_id, dir = here::here("fits/stan_all_patients")) {
+make_fit_path <- function(patient_id, dir) {
   file.path(dir, sprintf("fit_patient%03d.rds", patient_id))
 }
 

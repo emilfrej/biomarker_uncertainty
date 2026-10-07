@@ -13,21 +13,18 @@ pacman::p_load(tidybayes, bayesplot)
 
 #read in a fit
 ```{r}
-patient_id = 78
+patient_id = 12
 
-
-fit_path <- make_fit_path(patient_id = patient_id)
+fit_path <- make_fit_path(patient_id = patient_id, dir = here::here("fits/stan_all_adapt_delta_95_patients"))
 fit <- readRDS(fit_path)
 
-
-
 ```
+
+
 # get a summary of param estimates for the patient
 ```{r}
 fit$summary()
 ```
-
-
 
 ```{r}
 #get draws in tidy format of vars of interest
@@ -50,35 +47,26 @@ ggplot(draws, aes(x=turnover)) +
 setup the biomarker functions. 
 ```{r}
 #def func for see eq 3 in supplemental in Gallagher et al's biomarker paper "the time taken for a resistant sub-population of initial size R0 to reach Rf in the presence of κK sensitive cells
-s3 <- function(k=.2, d, rR, R0, K = 1) {
-  out <- ( 1 / (d - (1 - k)*rR) ) * (log( 1 + (rR*R0 / (d*K - (1-k)*K*rR+rR*R0)) ) - log(2))
+s3 <- function(kappa=.2, d, rR, R0, K = 1) {
+  out <- ( 1 / (d - (1 - kappa)*rR) ) * (log( 1 + (rR*R0 / (d*K - (1-kappa)*K*rR+rR*R0)) ) - log(2))
   return(out)
 }
 
 #calc delta at given parameter draws
-s4 <- function(k=.2, d, rR, R0, K = 1){
-  numerator <- s3(k=k, d = d, rR = rR, R0 = R0, K = K) - s3(k=0, d = d, rR = rR, R0=R0, K = K)
-  denominator <-                      s3(k=0, d = d, rR = rR, R0, K = K)
+s4 <- function(kappa=.2, d, rR, R0, K = 1){
+  numerator <- s3(kappa=kappa, d = d, rR = rR, R0 = R0, K = K) - s3(kappa=0, d = d, rR = rR, R0=R0, K = K)
+  denominator <-                      s3(kappa=0, d = d, rR = rR, R0, K = K)
   return( numerator / denominator)
 }
 
-
-
-#eTTP is given by
-S5 <- function(k=.2, d, rR, R0, K = 1) {
-  out <- (1+s3(k=k, d = d, rR = rR, R0 = R0, K = K)) * TTP(S_0 = 0)
-  return()
-}
-
+  
 
 draws <- draws |> 
-  mutate(delta_AT = s4(k=.2, d = dR, rR = rR, R0, K = 1)) |> 
+  mutate(delta_AT = s4(kappa=.2, d = dR, rR = rR, R0, K = 1)) |> 
   relocate(.draw, delta_AT) #rearrange for readability
-
-
+draws
 
 ```
-This sample can again be used for plotting
 ```{r}
 ggplot(draws, aes(x=delta_AT)) +
   geom_density(fill = "lightblue") +
@@ -86,25 +74,109 @@ ggplot(draws, aes(x=delta_AT)) +
   ggtitle(paste0("Delta AT for Patient ID ", patient_id)) +
   xlim(0,1)
 ```
+
+
+```{r}
+## credit to Kit Gallagher (see A New Mathematical Biomarker paper, utils/myUtils.py)
+calc_growth_time <- function(kappa, dR, K, rR, R0, upper = NULL, ...){
+  if (is.null(upper)){
+    upper <- 2 * R0
+  }
+  numerator <- upper * (rR * R0 + dR * K - (1 - kappa) * rR * K)
+  denominator <- R0 * (upper * rR + dR * K - (1 - kappa) * rR * K)
+  Time <- log(numerator / denominator) / (rR * (1 - kappa) - dR)
+  return(Time)
+}
+
+calc_average_overshoot <- function(tau, n_crit, rS, dD, dR, K, ...){
+  a <- rS * (1 - dD) - dR
+  b <- rS * (1 - dD) / K
+  denom <- b * n_crit - (b * n_crit - a) * exp(- a * tau)
+  max_overshoot_pos <- (a * n_crit) / denom
+  return((n_crit - max_overshoot_pos) / 2)
+}
+
+calc_critical_treatment_threshold <- function(tau, S0, K, rS, dS, prog = 1.2, ...){
+  numerator <- K * (dS - rS)
+  pre_exp <- (numerator / (prog * S0)) + rS
+  denominator <- (pre_exp * exp(tau * (rS - dS))) - rS
+  return(numerator / denominator)
+}
+
+calc_delta_benefit <- function(kappa, dR, K, rR, R0, ...){
+  T_plus <- calc_growth_time(kappa, dR, K, rR, R0, ...)
+  T_minus <- calc_growth_time(0, dR, K, rR, R0, ...)
+  return((T_plus - T_minus) / T_minus)
+}
+
+calc_atx_benefit <- function(tau, n0, K, ...){
+  n_crit <- calc_critical_treatment_threshold(tau, K = K, ...)
+  n_overshoot <- calc_average_overshoot(tau, n_crit, K = K, ...)
+  ave_n <- (n_crit + 1.2 * n0) / 2 - n_overshoot
+  return(calc_delta_benefit(kappa = ave_n / K, K = K, ...))
+}
+
+predict_ct_ttp <- function(rR, dR, K, R0, n0, n_lim = NULL, ...){
+  if (is.null(n_lim)){
+    n_lim <- n0 * 1.2
+  }
+  factor <- rR - dR
+  log_num <- rR - factor * (K / R0)
+  log_den <- rR - factor * (K / n_lim)
+  return(log(log_num / log_den) / factor)
+}
+
+predict_atx_ttp <- function(tau, ...){
+  benefit <- calc_atx_benefit(tau, ...)
+  ct_ttp <- predict_ct_ttp(...)
+  return(ct_ttp * (1 + benefit))
+}
+
+```
+
+
+
+calc eTTP for every draw
+```{r}
+#fixed vals used in the stan fit.
+draws <- draws |>
+  mutate(rS = 0.027, dD = 1.5, K = 1, dS = dR,
+         eTTP = predict_atx_ttp(tau = 30, rS = rS, dD = dD, dS = dS, dR = dR, rR = rR, K = K, S0 = S0, R0 = R0, n0 = n0)) |>
+  relocate(.draw, eTTP)
+draws
+```
+```{r}
+
+ggplot(draws, aes(x=eTTP)) +
+  geom_density(fill = "lightblue") +
+  theme_classic() +
+  ggtitle(paste0("Delta AT for Patient ID ", patient_id)) 
+
+```
+
+
+This sample can again be used for plotting
+
 # sampling issues
 ```{r}
 patient_ids <- c(12, 20, 25, 78, 85)
 
-for (patient_id in patient_ids[2]){
+for (patient_id in patient_ids){
 
   #read in the fit
-  fit_path <- make_fit_path(patient_id = patient_id)
+  fit_path <- make_fit_path(patient_id = patient_id, dir = here::here("fits/stan_all_adapt_delta_95_patients"))
   fit <- readRDS(fit_path)
 
-  #check rhat
-  fit_summary <- fit$summary
+  #get fit summary
+  print(paste0("Patient ID: ", patient_id))
+  fit_summary <- as.data.frame(fit$summary(c("cost", "turnover", "rFrac","n0" , "sigma"))) |> 
+    mutate(across(where(is.numeric), ~ round(.x, 3)))
+  print(fit_summary)
+  print(fit$diagnostic_summary())
 
-  # print(fit$diagnostic_summary())
-
-  print(mcmc_pairs(
-    fit$draws(c("cost", "turnover", "n0", "rFrac", "sigma")),
-    np = nuts_params(fit)
-  ))
+  #draw pairs
+  print(mcmc_pairs(fit$draws(c("cost", "turnover", "n0", "rFrac", "sigma")), np = nuts_params(fit))
+  )
 }
 
 
