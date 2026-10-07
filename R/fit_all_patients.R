@@ -2,26 +2,43 @@ pacman::p_load(cmdstanr, tidyverse)
 source(here::here("R/functions.R"))
 
 #make out dir
-out_dir <- here::here("fits/stan_all_adapt_delta_95_patients")
+out_dir <- here::here("fits/free_rs_K_stan_all_adapt_patients")
 dir.create(out_dir, recursive = TRUE, showWarnings = TRUE)
 
 #list all files in bruchowsky data
 data_paths <- list.files(here::here("dataTanaka/Bruchovsky_et_al"), pattern = "^patient\\d+\\.txt$", full.names=T)
 
-mod <- cmdstan_model(here::here("stan/prototype_model.stan"))
+mod <- cmdstan_model(here::here("stan/free_k_free_rs_prototype_model.stan"))
 
 fixed_vals <- list(rS = 0.027, K = 1, dD = 1.5)
 
 priors <- list(
-  cost_prior     = c(1, 1),
-  turnover_prior = c(2, 5),
-  n0_prior       = c(1, 1),
-  rFrac_prior    = c(1, 30),
+  cost_prior     = c(5, 10), #betas
+  turnover_prior = c(2, 2),
+  n0_prior       = c(2, 2),
+  rFrac_prior    = c(2, 30),
+  K_prior        = c(log(2), .4), #lognorms
+  rS_prior       = c(log(0.019), 0.25),
   sigma_prior    = c(-2, 1)
 )
 
-OVERWRITE <- F
+OVERWRITE <- T
 target_ids <- c(12, 20, 25, 78, 85)
+
+
+#set where to start
+init_fun <- function() { 
+  n0 <- 0.5 #has to be outside to k can be used
+  list(
+    cost     = 0.3,
+    turnover = 0.4,
+    n0       = 0.5,
+    rFrac    = 0.05,
+    sigma    = 0.1,
+    rS       = .027,
+    K        = n0 + runif(1, 0.5, 1.5)  
+  )
+}
 
 #fit all data and save.
 for (path in data_paths){
@@ -67,7 +84,7 @@ for (path in data_paths){
   # )
   
   fit <- tryCatch(
-    mod$sample(data = stan_data, chains = 4, parallel_chains = 4, seed = patient_id, adapt_delta = .95),
+    mod$sample(data = stan_data, chains = 4, parallel_chains = 4, seed = patient_id, adapt_delta = .95, init = init_fun),
     error = function(e) { message("patient ", patient_id, " failed: ", conditionMessage(e)); NULL }
   )
   

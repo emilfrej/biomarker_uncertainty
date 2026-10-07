@@ -17,9 +17,6 @@ make_prior_df <- function(prior_list){
       "sigma",    "dlnorm", prior_list$sigma_prior[1],    prior_list$sigma_prior[2],    NA,          NA
     )
 }
-
-
-
 ```
 
 Setup priors and visualize. Dashed lines show the limits from "A New Mathematical Biomarker" paper

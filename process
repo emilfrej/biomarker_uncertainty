@@ -13,10 +13,12 @@ build the stan model
  - the check
  
 future: 
-- make estimates rel
+- see how much information can be gained by data -> make model hierarchical. Will probably require reparameterizing. 
+
 - find out how to extend the model so we use information from other patients to inform estimates for a new patient.
+- how to reparametrize
 
 
 questions:
-what limits were used when? so limits were used for first cycle fits, but strobl used other limits
+what limits were used when? so limits were used for first cycle fits, but strobl used other 
  

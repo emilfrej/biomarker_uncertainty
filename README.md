@@ -1,5 +1,10 @@
 To do
-Calc eTTP
+
+for friday:
+  make notebook pedagogical
+  show eTTP, and Delta AT for each patient
+  show prior. Posterior_updates
+  
 
 Make hierarchical model
 
@@ -8,7 +13,10 @@ Show SBC doesn't imply I'm sampling from a different posterior
 Show how sensitive inference is to prior
 
 Find out why model breaks.
-Find out when it does so.
+
+make a nice fitting function (ids, priors, stan model, stan info, out dir, overwrite)
+
+
 
 Main goal:
 Get a delta AT and eTTP posteriors I trust for the patients in "mathematical biomarker"" paper
@@ -25,6 +33,7 @@ How to go from raw PSA to measurements and back
 Why 1.5 death rate
 How do you go about this workflow. Maybe find a paper that does the same thing?
 is k = .2 still used? can find it in the arxiv says, but cant find in the publication
+What about n0
 
 #
 stories you could tell:
@@ -36,9 +45,11 @@ stories you could tell:
   - simulate values from normed / non_normed values and see how identifiable they are. 
   - relax fixed values / non-dimensionality
   
+
+  
 Notes:
 Maybe doing all of this in python would have been easier. Given all the work kit and strobl has already done. There would have been a lot of functions I could have reused. But then the stan stuff I'm familiar with in R.
-
+currently passing starting vals directly which likely isn't ideal
 
   
   

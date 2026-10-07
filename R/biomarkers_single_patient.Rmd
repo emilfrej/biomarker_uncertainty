@@ -15,7 +15,9 @@ pacman::p_load(tidybayes, bayesplot)
 ```{r}
 patient_id = 12
 
-fit_path <- make_fit_path(patient_id = patient_id, dir = here::here("fits/stan_all_adapt_delta_95_patients"))
+target_dir = here::here("fits/free_rs_K_stan_all_adapt_patients")
+
+fit_path <- make_fit_path(patient_id = patient_id, dir = target_dir)
 fit <- readRDS(fit_path)
 
 ```
@@ -164,18 +166,18 @@ patient_ids <- c(12, 20, 25, 78, 85)
 for (patient_id in patient_ids){
 
   #read in the fit
-  fit_path <- make_fit_path(patient_id = patient_id, dir = here::here("fits/stan_all_adapt_delta_95_patients"))
+  fit_path <- make_fit_path(patient_id = patient_id, dir = target_dir)
   fit <- readRDS(fit_path)
 
   #get fit summary
   print(paste0("Patient ID: ", patient_id))
-  fit_summary <- as.data.frame(fit$summary(c("cost", "turnover", "rFrac","n0" , "sigma"))) |> 
+  fit_summary <- as.data.frame(fit$summary(c("cost", "turnover", "rFrac","n0", "K", "rS", "sigma"))) |> 
     mutate(across(where(is.numeric), ~ round(.x, 3)))
   print(fit_summary)
   print(fit$diagnostic_summary())
 
   #draw pairs
-  print(mcmc_pairs(fit$draws(c("cost", "turnover", "n0", "rFrac", "sigma")), np = nuts_params(fit))
+  print(mcmc_pairs(fit$draws(c("cost", "turnover", "n0", "rFrac","K", "rS", "sigma")), np = nuts_params(fit))
   )
 }
 
