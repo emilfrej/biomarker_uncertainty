@@ -2,7 +2,7 @@ pacman::p_load(cmdstanr, tidyverse)
 source(here::here("R/functions.R"))
 
 #make out dir
-out_dir <- here::here("fits/stan_all_patients")
+out_dir <- here::here("fits/stan_all_adapt_delta_95_patients")
 dir.create(out_dir, recursive = TRUE, showWarnings = TRUE)
 
 #list all files in bruchowsky data
@@ -20,16 +20,22 @@ priors <- list(
   sigma_prior    = c(-2, 1)
 )
 
+OVERWRITE <- F
+target_ids <- c(12, 20, 25, 78, 85)
+
 #fit all data and save.
 for (path in data_paths){
   
   patient_id <- parse_number(basename(path))
 
   #make fit path
-  fit_path <- make_fit_path(patient_id, dir = here::here("fits/stan_all_patients"))
+  fit_path <- make_fit_path(patient_id, dir = out_dir)
   
-  #skip if fit exists
-  if (file.exists(fit_path)) next
+  #skip if fit exists and overwrite is not on.
+  if (file.exists(fit_path) && !(OVERWRITE)) next
+  
+  #skip if patient ID is not in target id
+  if (!is.null(target_ids) && !(patient_id %in% target_ids)) next
   
   #read in the data
   patient_data <- load_bruchowsky_patients(patient_id)[[as.character(patient_id)]]
@@ -55,13 +61,13 @@ for (path in data_paths){
   
   ## try to run model
   #run path finder for values
-  pf <- tryCatch(
-    mod$pathfinder(data = stan_data, num_paths = 4, seed = patient_id, refresh = 0),
-    error = function(e) { message("patient ", patient_id, " pathfinder failed, using default inits"); NULL }
-  )
+  # pf <- tryCatch(
+  #   mod$pathfinder(data = stan_data, num_paths = 4, seed = patient_id, refresh = 0),
+  #   error = function(e) { message("patient ", patient_id, " pathfinder failed, using default inits"); NULL }
+  # )
   
   fit <- tryCatch(
-    mod$sample(data = stan_data, chains = 4, parallel_chains = 4, seed = patient_id, init = pf),
+    mod$sample(data = stan_data, chains = 4, parallel_chains = 4, seed = patient_id, adapt_delta = .95),
     error = function(e) { message("patient ", patient_id, " failed: ", conditionMessage(e)); NULL }
   )
   

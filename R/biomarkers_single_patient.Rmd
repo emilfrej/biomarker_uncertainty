@@ -5,7 +5,7 @@ output: html_document
 
 ```{r}
 source("functions.R")
-pacman::p_load(tidybayes)
+pacman::p_load(tidybayes, bayesplot)
 ```
 
 
@@ -62,7 +62,7 @@ s4 <- function(k=.2, d, rR, R0, K = 1){
   return( numerator / denominator)
 }
 
-e
+
 
 #eTTP is given by
 S5 <- function(k=.2, d, rR, R0, K = 1) {
@@ -75,7 +75,7 @@ draws <- draws |>
   mutate(delta_AT = s4(k=.2, d = dR, rR = rR, R0, K = 1)) |> 
   relocate(.draw, delta_AT) #rearrange for readability
 
-draws
+
 
 ```
 This sample can again be used for plotting
@@ -86,37 +86,33 @@ ggplot(draws, aes(x=delta_AT)) +
   ggtitle(paste0("Delta AT for Patient ID ", patient_id)) +
   xlim(0,1)
 ```
-
+# sampling issues
 ```{r}
-# patient_ids <- c(12, 20, 25, 78, 85)
-# 
-# for (patient_id in patient_ids){
-#   
-#   #read in the fit
-#   fit_path <- make_fit_path(patient_id = patient_id)
-#   fit <- readRDS(fit_path)
-#   
-#   #check rhat
-#   fit_summary <- fit$summary
-#   
-#   # print(fit$diagnostic_summary())
-#   
-#   print(bayesplot::mcmc_pairs(
-#     fit$draws(c("cost", "turnover", "n0", "rFrac", "sigma")),
-#     np = bayesplot::nuts_params(fit)
-#   ))
-# }
-```
+patient_ids <- c(12, 20, 25, 78, 85)
 
+for (patient_id in patient_ids[2]){
 
-# def a function to estimate delta at
+  #read in the fit
+  fit_path <- make_fit_path(patient_id = patient_id)
+  fit <- readRDS(fit_path)
 
-# def a function to estimate eTTP
-```{r}
+  #check rhat
+  fit_summary <- fit$summary
+
+  # print(fit$diagnostic_summary())
+
+  print(mcmc_pairs(
+    fit$draws(c("cost", "turnover", "n0", "rFrac", "sigma")),
+    np = nuts_params(fit)
+  ))
+}
+
 
 ```
 
 
-#estimate them
-
+```{r}
+fit$summary()
+mcmc_pairs(fit$draws(c("mu[1]", "mu[2]")), np = nuts_params(fit))
+```
 

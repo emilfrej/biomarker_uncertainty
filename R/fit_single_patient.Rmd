@@ -20,8 +20,6 @@ patient_id  <- true_params$PatientId
 sim_data <- simulate_best_strobl_fits(n=1, sigma=.025) |>
   pivot_longer(cols = c(PSA_simulated, PSA_observed), names_to="Metric", values_to="PSA") |>
   filter(Metric == "PSA_observed")
-
-
 ```
 
 
@@ -67,20 +65,14 @@ stan_data <- list(
 
 #add priors
 stan_data <- c(stan_data, priors)
-
-
-
 ```
 
 fit model
 ```{r}
 mod <- cmdstan_model(here::here("stan/prototype_model.stan"))
 
-fit <- mod$sample(data = stan_data, chains = 4, parallel_chains = 4, seed = 1)
-```
+fit <- mod$sample(data = stan_data, chains = 4, parallel_chains = 4, seed = 1, diagnostics = T)
 
-diagnostics
-```{r}
 fit$diagnostic_summary()
 
 fit$summary(c("cost", "turnover", "n0", "rFrac", "sigma"))
@@ -89,6 +81,6 @@ fit$summary(c("cost", "turnover", "n0", "rFrac", "sigma"))
 true_params |>
   mutate(rFrac = R0 / (S0 + R0)) |>
   select(cost, turnover, n0, rFrac)
+
+
 ```
-
-
