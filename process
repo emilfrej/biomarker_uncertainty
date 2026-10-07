@@ -17,5 +17,6 @@ future:
 - find out how to extend the model so we use information from other patients to inform estimates for a new patient.
 
 
-Probably a good idea to make sure I know turnover, cost, n0 and rFrac
+questions:
+what limits were used when? so limits were used for first cycle fits, but strobl used other limits
  

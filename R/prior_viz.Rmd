@@ -1,0 +1,62 @@
+---
+title: "prior_viz"
+output: html_document
+---
+Notebook for visualizing prior parameter distributions and comparing to Strobl and Gallaghers work. First setup the dataframe based on priors list fed to stan. 
+```{r}
+#function for converting a prior list for Stan into tidy dataframe. distribution types are hardcoded - check they match Stan. Limits are for the full history fit
+make_prior_df <- function(prior_list){
+    tribble(
+      ~param,     ~dist,    ~p1,                          ~p2,                          ~biomarker_min, ~biomarker_max,
+      "cost",     "dbeta",  prior_list$cost_prior[1],     prior_list$cost_prior[2],     0.1,         .5,
+      "turnover", "dbeta",  prior_list$turnover_prior[1], prior_list$turnover_prior[2], 0.1,         1,
+      "n0",       "dbeta",  prior_list$n0_prior[1],       prior_list$n0_prior[2],       0.1,         1,
+      "rFrac",    "dbeta",  prior_list$rFrac_prior[1],    prior_list$rFrac_prior[2],    1e-5,        0.1,
+      "K",        "dlnorm",  prior_list$K_prior[1],       prior_list$K_prior[2],        0.5,         5,
+      "rS",        "dlnorm",  prior_list$rS_prior[1],       prior_list$rS_prior[2],     0.01,        0.03,
+      "sigma",    "dlnorm", prior_list$sigma_prior[1],    prior_list$sigma_prior[2],    NA,          NA
+    )
+}
+
+
+
+```
+
+Setup priors and visualize. Dashed lines show the limits from "A New Mathematical Biomarker" paper
+```{r}
+# should probably be from a function in R/functions.R**
+priors <- list(
+  cost_prior     = c(5, 10), #betas
+  turnover_prior = c(2, 2),
+  n0_prior       = c(2, 2),
+  rFrac_prior    = c(2, 30),
+  K_prior        = c(log(2), .4), #lognorms
+  rS_prior       = c(log(0.019), 0.25),
+  sigma_prior    = c(-2, 1)
+)
+
+#
+prior_df<- make_prior_df(priors)
+
+
+
+#loop over each and draw prior
+for (i in 1:nrow(prior_df)) {
+  row <- prior_df[i, ]
+  
+  #to fix plot limits of x axis
+  q_fun <- match.fun(sub("^d", "q", row$dist)) 
+
+  p <- ggplot() +
+    geom_function(fun = match.fun(row$dist), args = list(row$p1, row$p2), n = 500,
+                xlim = c(0, q_fun(0.999, row$p1, row$p2))) +
+    geom_vline(xintercept = c(row$biomarker_min, row$biomarker_max), linetype = "dashed", na.rm = TRUE) +
+    expand_limits(y = 0) +
+    labs(x = NULL, y = "density", title = row$param) +
+    theme_classic()
+
+  print(p)
+}
+
+```
+
