@@ -169,3 +169,59 @@ make_fit_path <- function(patient_id, dir) {
   file.path(dir, sprintf("fit_patient%03d.rds", patient_id))
 }
 
+#### BIOMARKER FUNCTIONS #####
+## credit to Kit Gallagher (see A New Mathematical Biomarker paper, utils/myUtils.py)
+calc_growth_time <- function(kappa, dR, K, rR, R0, upper = NULL, ...){
+  if (is.null(upper)){
+    upper <- 2 * R0
+  }
+  numerator <- upper * (rR * R0 + dR * K - (1 - kappa) * rR * K)
+  denominator <- R0 * (upper * rR + dR * K - (1 - kappa) * rR * K)
+  Time <- log(numerator / denominator) / (rR * (1 - kappa) - dR)
+  return(Time)
+}
+
+calc_average_overshoot <- function(tau, n_crit, rS, dD, dR, K, ...){
+  a <- rS * (1 - dD) - dR
+  b <- rS * (1 - dD) / K
+  denom <- b * n_crit - (b * n_crit - a) * exp(- a * tau)
+  max_overshoot_pos <- (a * n_crit) / denom
+  return((n_crit - max_overshoot_pos) / 2)
+}
+
+calc_critical_treatment_threshold <- function(tau, S0, K, rS, dS, prog = 1.2, ...){
+  numerator <- K * (dS - rS)
+  pre_exp <- (numerator / (prog * S0)) + rS
+  denominator <- (pre_exp * exp(tau * (rS - dS))) - rS
+  return(numerator / denominator)
+}
+
+calc_delta_benefit <- function(kappa, dR, K, rR, R0, ...){
+  T_plus <- calc_growth_time(kappa, dR, K, rR, R0, ...)
+  T_minus <- calc_growth_time(0, dR, K, rR, R0, ...)
+  return((T_plus - T_minus) / T_minus)
+}
+
+calc_atx_benefit <- function(tau, n0, K, ...){
+  n_crit <- calc_critical_treatment_threshold(tau, K = K, ...)
+  n_overshoot <- calc_average_overshoot(tau, n_crit, K = K, ...)
+  ave_n <- (n_crit + 1.2 * n0) / 2 - n_overshoot
+  return(calc_delta_benefit(kappa = ave_n / K, K = K, ...))
+}
+
+predict_ct_ttp <- function(rR, dR, K, R0, n0, n_lim = NULL, ...){
+  if (is.null(n_lim)){
+    n_lim <- n0 * 1.2
+  }
+  factor <- rR - dR
+  log_num <- rR - factor * (K / R0)
+  log_den <- rR - factor * (K / n_lim)
+  return(log(log_num / log_den) / factor)
+}
+
+predict_atx_ttp <- function(tau, ...){
+  benefit <- calc_atx_benefit(tau, ...)
+  ct_ttp <- predict_ct_ttp(...)
+  return(ct_ttp * (1 + benefit))
+}
+

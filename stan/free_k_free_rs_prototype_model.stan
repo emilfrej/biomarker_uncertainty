@@ -85,7 +85,7 @@ transformed parameters{
   theta[5] = dR;
   theta[6] = K;
   
-  array[n_obs] vector[2] cell_populations = ode_rk45(dpop_dt, starting_state, 0, measurement_times, theta, treatment_indicator);
+  array[n_obs] vector[2] cell_populations = ode_rk45(dpop_dt, starting_state, -1e-6, measurement_times, theta, treatment_indicator); //start a little before first measurement t=0
   
   // get sum of cell pops at each time and normalize by initial cell amount
   vector[n_obs] mu;
@@ -93,8 +93,6 @@ transformed parameters{
     mu[i] = sum(cell_populations[i]);
   }
 }
-
-
 
 model {
   //priors

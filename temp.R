@@ -23,7 +23,7 @@ priors <- list(
 )
 
 #settings
-first_cycle <- F
+first_cycle <- T
 OVERWRITE <- T
 target_ids <- c(12, 20, 25, 78, 85)
 
@@ -52,7 +52,7 @@ init_fun <- function() {
 for (path in data_paths){
   
   patient_id <- parse_number(basename(path))
-
+  
   #make fit path
   fit_path <- make_fit_path(patient_id, dir = out_dir)
   
@@ -94,7 +94,7 @@ for (path in data_paths){
   # )
   
   fit <- tryCatch(
-    mod$sample(data = stan_data, chains = 3, parallel_chains = 4,  seed = patient_id, adapt_delta = .95, init = init_fun),
+    mod$sample(data = stan_data, chains = 4, parallel_chains = 4,  seed = patient_id, adapt_delta = .95, init = init_fun),
     error = function(e) { message("patient ", patient_id, " failed: ", conditionMessage(e)); NULL }
   )
   
@@ -102,5 +102,5 @@ for (path in data_paths){
   if (!is.null(fit) && all(fit$return_codes() == 0)) {
     fit$save_object(fit_path)
   }
-
+  
 }

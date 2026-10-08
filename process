@@ -1,24 +1,16 @@
-build a forward simulator:
- - partly to understand that I understood the assumed model correctly 
- - and then as tool to know what what parameter values makes the sampler break down
- - it could also be used to examine the implications that a given selection of priors have
- - open question is how to extend this to hierarchichal and whether or not to implement treatment decision in original trial
- - there is a check that you can run to see if your forward simulator and model fitting pipeline encodes the same mathematical model
- 
-build the stan model 
- - so we can sample parameter values given the priors and the data. Yields a few thousand samples of parameter vals to be used for estimating biomarkers.
- - used all observations currently. 
- - make it not breakdown. Coded it simply, but the sampler breaks down with some patients currently. It's also pretty slow. Some combination of the chosen priors, sampling statements, and sampler settings. 
- - haven't examined sensitivy of priors.
- - the check
- 
-future: 
-- see how much information can be gained by data -> make model hierarchical. Will probably require reparameterizing. 
+Process has been to build and validate a forward simulator against Kit's - partly to make sure I understood the model, but also for future use to validate stan model.
 
-- find out how to extend the model so we use information from other patients to inform estimates for a new patient.
-- how to reparametrize
+Simulated data of the best fitting fits from Strobl, to make sure that the would Stan model would run in the best case.
+
+Found out that more params were free than I remebered or expected. Now its maximally free beyond dD = 1.5.
+
+Made it run on patients from the biomarker paper. 
+
+Add biomarker
 
 
 questions:
-what limits were used when? so limits were used for first cycle fits, but strobl used other 
- 
+How would you get absolute PSA out again?
+how to read AT score in the paper figure? What code generates it?
+What makes for a meaningfull update
+
