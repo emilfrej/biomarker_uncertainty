@@ -3,33 +3,34 @@ title: "biomarkers_single_patient"
 output: html_document
 ---
 
-```{r}
+```{r warning=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 #packages and custom functions
 source("functions.R")
 pacman::p_load(tidybayes, bayesplot, posterior)
 ```
 
-# Bayesian Analysis of Patient id 12
+# Bayesian Analysis of Patient ID 12
 
-This script loads in a Bayesian fit of the lokta volterra model to
-patient 12 from the Bruchovsky cohort. The model is fitted using Stan -
+This script loads in a Bayesian fit of the Lotka-Volterra model to
+patient 12 from the Bruchovsky cohort. The model is fitted using Stan,
 basically just a wrapper around C++ that runs MCMC. The model has fairly
-tight priors (see corresponding script. The following parameters were
-allowed to vary:
+tight priors (see the corresponding script). The following parameters
+were allowed to vary:
 
 - cost
 
-- turnover: cell death rate
+- turnover
 
-- rFrac: fraction of resitant cells at t=0)
+- rFrac
 
-- n0: initial cell density
+- n0
 
-- K: carrying capacity of tomour
+- K
 
-- rS: proliferation rate of sensitive cells
+- rS
 
-- sigma: noise parameter
+- sigma
 
 ```{r}
 #load in the patient and print summary of fitted parameters
@@ -45,23 +46,23 @@ fit$summary(c("turnover", "cost", "n0", "rFrac", "K", "rS", "sigma"))
 
 This is a summary of the 3000 parameter estimates drawn according to the
 probability given the data, priors and the ODE model assuming that
-normalized PSA at time T correspond to Gaussian noise around the total
+normalized PSA at time T corresponds to Gaussian noise around the total
 cell population (S+R) at the same timepoint. MCMC samples can be
-accessed (with a bit of wrangling)
+accessed (with a bit of wrangling):
 
 ```{r}
 #get draws in tidy format of free params
 draws <- fit$draws(c("cost", "turnover", "n0", "rFrac", "sigma", "rS", "K")) |>                                       
     spread_draws(cost, turnover, n0, rFrac, sigma, K, rS) |>                                                          
-    select(c(-.chain, -.iteration))  #rename starting states 
+    select(c(-.chain, -.iteration))  #drop chain and iteration columns
 
 #show draws table
 draws
 
 ```
 
-We can use this to plot a density function over the parameters. For
-example *turnover*
+We can use this to plot a density function over the parameters, for
+example *turnover*:
 
 ```{r}
 ggplot(draws, aes(x=turnover)) +
@@ -74,10 +75,9 @@ ggplot(draws, aes(x=turnover)) +
 
 ## Adding Biomarkers
 
-For each parameter draw we can define functions that take a draw in an
-compute a value based on the draw to propogate the uncertinaty. For
-example, we can calculate the biomarkers AT score and eTTP for each
-draw.
+For each parameter draw we can define functions that take a draw and
+compute a value based on it, to propagate the uncertainty. For example,
+we can calculate the biomarkers AT score and eTTP for each draw.
 
 ```{r}
 #rebuild draws object with all variables that we need
@@ -88,7 +88,7 @@ draws <- fit$draws(c("cost", "turnover", "n0", "rFrac", "sigma", "rS", "K", "rR"
     rename(S0 = "1", R0 = "2") |>   
   
     #calculate biomarkers 
-    mutate(AT_score = calc_delta_benefit(kappa=.2, dR = dR, K=K, rR = rR, R0 = R0), #check with kit whether kappa=.02 makes sense
+    mutate(AT_score = calc_delta_benefit(kappa=.2, dR = dR, K=K, rR = rR, R0 = R0), #check with Kit whether kappa=.2 makes sense
            eTTP = predict_atx_ttp(tau = 30, rS = rS, dR = dR, dD = 1.5, dS = dR, K = K, rR = rR, R0 = R0, S0 = S0, n0 = n0)) |> 
   select(c(-.iteration, -.chain)) |> 
   relocate(c(.draw, AT_score, eTTP))
@@ -97,7 +97,7 @@ draws <- fit$draws(c("cost", "turnover", "n0", "rFrac", "sigma", "rS", "K", "rR"
 draws
 ```
 
-We can plot the densities of the samples
+We can plot the densities of the samples:
 
 ```{r}
 #plotting
@@ -138,27 +138,11 @@ ggplot(cell_population_draws, aes(x = Time, y = cell_populations, color = cell_t
   ggtitle("Inferred Cell Densities")
 ```
 
-# Using only data from the first cycle
+# Inference Using Only The First Cycle
 
 The following shows inference when only the first treatment cycle
-(CycleId = 1) is used.
-
-- cost
-
-- turnover:
-
-- rFrac: fraction of resistant cells at t=0
-
-- n0: initial cell density
-
-- K: carrying capacity of tumour
-
-- rS: proliferation rate of sensitive cells
-
-- sigma: noise parameter
-
-Read in the first cycle fits of all five patients and calculate the AT
-score for every draw.
+(CycleId = 1) is used. It is still fitted with all parameters except dD
+allowed to vary.
 
 ```{r}
 
@@ -189,13 +173,13 @@ for (id in patient_ids) {
 
 ```
 
-Looks very uncertain. R is also complaining that AT score could be
-computed for approx 280 rows computed, so this a biased picture.
+This looks very uncertain. R also warns that the AT score could not be
+computed for approx. 280 draws, so this is a biased picture.
 
 We can also check how much the posteriors moved from the priors.
 
 ```{r}
-#clauded up a function plot posteriors versus priors
+#clauded up a function to plot posteriors versus priors
 plot_prior_posterior <- function(patient_id, n = 4000) {
   first_fit <- readRDS(make_fit_path(patient_id, here::here("fits/free_rs_K_first_cycle")))
   full_fit  <- readRDS(make_fit_path(patient_id, here::here("fits/free_rs_K_full_history")))
@@ -208,8 +192,7 @@ plot_prior_posterior <- function(patient_id, n = 4000) {
     K        = rlnorm(n, log(2), .4),
     rS       = rlnorm(n, log(0.019), .25),
     sigma    = rlnorm(n, -2, 1)
-  ) |>
-    filter(K > n0)
+  )
   
   params <- names(prior_draws)
   get_post <- function(fit) {
@@ -237,43 +220,41 @@ for (id in c(12, 20, 25, 78, 85)) {
 
 ## **What would be a meaningful contribution?**
 
-Would like to implement the hierarchical model that you suggest to
-estimate population level priors that could be used for first cycle
-fits, and investigate how accurate inference that would allow us to make
-about biomarkers. Building something that clinicians could use as
-cut-off to select who gets what treatment. I'm guessing this would be
-maximally informed by fitting finding some population level prior. For
-example a hierarchical model of the Bruchovsky data.
+I would like to implement the hierarchical model that you suggested to
+estimate population-level priors that could be used for first cycle
+fits, and investigate how accurate the resulting inference about the
+biomarkers would be. The aim would be something that clinicians could
+use as a cut-off to select who gets which treatment. I'm guessing this
+would be best informed by fitting a population-level prior, for example
+with a hierarchical model of the Bruchovsky data and showing what this
+model is capable of / what not.
 
-# Current issues:
+# Current issues
 
 ### eTTP and expected mean daily dose
 
-Thought, I had gotten the eTTP right yesterday, but checked against Fig
-1 in "Mathematical Biomaker" paper had completely different estimates
-than the paper. *Would like to know what functions correspond to what
-measures, and would be most meaningful to report going forward.*
+what metric's to report and how to validate?
 
 ### Sampling
 
-At least two things can go wrong with the sampler
+At least two things can go wrong with the sampler:
 
-- The easy to spot problem: The sampler breaks down in some areas.
+- The easy-to-spot problem: the sampler breaks down in some areas.
+  *currently here*.
 
-- The difficult to spot problem: sampler is not converging. There are
-  some easy to use metrics, but to my understanding the gold standard is
-  running thousands of forward simulations and investigating how the
-  model performs on these. Haven't looked much at this yet, since it
-  requires fitting the model thousands of times and its currently
-  breaking down and slow.
+- The difficult-to-spot problem: the sampler is not converging. There
+  are some easy-to-use metrics, but to my understanding the gold
+  standard is running thousands of forward simulations and investigating
+  how the model performs on these. I haven't looked much at this yet,
+  since it requires fitting the model thousands of times and it's
+  currently slow and breaking down.
 
 ```{r}
-patient_ids <- c(12, 20, 25, 78, 85)
-
+#plot sampling
 for (id in patient_ids){
 
   #read in the fit
-  fit_path <- make_fit_path(patient_id = id, dir = target_dir)
+  fit_path <- make_fit_path(patient_id = id, dir = here::here("fits/free_rs_K_first_cycle"))
   fit <- readRDS(fit_path)
 
   #get fit summary
@@ -288,5 +269,3 @@ for (id in patient_ids){
   )
 }
 ```
-
-### 

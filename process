@@ -1,4 +1,4 @@
-Process has been to build and validate a forward simulator against Kit's - partly to make sure I understood the model, but also for future use to validate stan model.
+build and validate a forward simulator against Kit's - partly to make sure I understood the model, but also for future use to validate stan model.
 
 Simulated data of the best fitting fits from Strobl, to make sure that the would Stan model would run in the best case.
 
@@ -6,11 +6,12 @@ Found out that more params were free than I remebered or expected. Now its maxim
 
 Made it run on patients from the biomarker paper. 
 
-Add biomarker
+Add delta AT
 
 
 questions:
-How would you get absolute PSA out again?
+Biomarkers, exactly which, and how are they computed
 how to read AT score in the paper figure? What code generates it?
-What makes for a meaningfull update
+What makes for a meaningful contribution
 
+considering if this would be smarter to do this in python
