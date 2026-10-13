@@ -72,7 +72,7 @@ transformed parameters{
   real dR = turnover * rS;
   
   //make prior over starting state prior
-  vector[2] starting_state;
+  vector<lower=0>[2]  starting_state;
     starting_state[1] = (1 - rFrac) * n0;   // S0
     starting_state[2] = rFrac * n0; // R0
   
@@ -87,10 +87,10 @@ transformed parameters{
   
   array[n_obs] vector[2] cell_populations = ode_rk45(dpop_dt, starting_state, -1e-6, measurement_times, theta, treatment_indicator); //start a little before first measurement t=0
   
-  // get sum of cell pops at each time and normalize by initial cell amount
+  // get sum of cell pops at each time and normalize by initial cell amount. Clamp to 0 when solver gives tiny negative populations
   vector[n_obs] mu;
   for (i in 1:n_obs){
-    mu[i] = sum(cell_populations[i]);
+    mu[i] = fmax(cell_populations[i][1], 0) + fmax(cell_populations[i][2], 0);
   }
 }
 
@@ -101,9 +101,12 @@ model {
   n0       ~ beta(n0_prior[1], n0_prior[2]);  
   rFrac    ~ beta(rFrac_prior[1], rFrac_prior[2]);
   sigma    ~ lognormal(sigma_prior[1], sigma_prior[2]);
-  PSA_norm ~ normal(mu, sigma);
   K  ~ lognormal(K_prior[1], K_prior[2]);
   rS ~ lognormal(rS_prior[1], rS_prior[2]);
+  
+  //likelihood
+  PSA_norm ~ normal(mu, sigma);
+
 }
 
 generated quantities{

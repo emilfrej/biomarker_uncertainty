@@ -1,10 +1,6 @@
 To do
+Map out what work would still need to be done in order to get biomarkers for a new patient or if browning showed that this model makes no sense. 
 
-for friday:
-  make notebook pedagogical
-  show eTTP, and Delta AT for each patient
-  show prior. Posterior_updates
-  
 
 Make hierarchical model
 

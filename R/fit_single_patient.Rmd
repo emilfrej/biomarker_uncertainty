@@ -1,86 +1,31 @@
----
-title: "fit_single_patient"
-output: html_document
----
-
 ```{r}
-pacman::p_load(cmdstanr, tidyverse)
-source("functions.R")
-set.seed(1)
+pacman::p_load(tidyverse, bayesplot, tidybayes, cmdstanr)
 ```
 
 
-
-load in data sim_data
 ```{r}
-#best fitting strobl patient and its fitted params (the "true" values for the simulation)
-true_params <- get_n_best_fits(1)
-patient_id  <- true_params$PatientId
+#load in the patient and print summary of fitted parameters
+patient_id = 85
 
-sim_data <- simulate_best_strobl_fits(n=1, sigma=.025) |>
-  pivot_longer(cols = c(PSA_simulated, PSA_observed), names_to="Metric", values_to="PSA") |>
-  filter(Metric == "PSA_observed")
-```
+target_dir = here::here("fits/free_rs_K_full_history")
+fit_path <- make_fit_path(patient_id = patient_id, dir = target_dir)
+fit <- readRDS(fit_path)
 
-
-setup priors
-```{r}
-priors <- list(
-    cost_prior     = c(1, 1),
-    turnover_prior = c(2, 5),
-    n0_prior       = c(1, 1),
-    rFrac_prior    = c(1, 30),
-    sigma_prior    = c(-2, 1)
-  )
-
-```
-
-
-prep it for stan
-```{r}
-#treatment indicator: one 0/1 value per day, built from the full clinical data (incl. rows with missing PSA)
-clinical_data <- load_bruchowsky_patients(patient_id)[[as.character(patient_id)]]
-sched <- build_treatment_schedule(clinical_data)
-
-treatment_indicator <- rep(sched$dose, times = sched$end - sched$start)
-treatment_indicator <- c(treatment_indicator, tail(treatment_indicator, 1)) #cover the last day
-treatment_indicator <- as.integer(treatment_indicator)
-
-#observations: drop t = 0, since ode times must be after the starting time
-obs <- sim_data |> filter(time > 0)
-
-stan_data <- list(
-  n_obs = nrow(obs),
-  measurement_times= obs$time,
-  PSA_norm = obs$PSA,
-  n_days = length(treatment_indicator),
-  treatment_indicator = treatment_indicator,
-  #fixed vals
-  rS = 0.027, 
-  K = 1, 
-  dD = 1.5,
-  #misc
-  run_diagnostics = 0
-)
-
-#add priors
-stan_data <- c(stan_data, priors)
-```
-
-fit model
-```{r}
-mod <- cmdstan_model(here::here("stan/prototype_model.stan"))
-
-fit <- mod$sample(data = stan_data, chains = 4, parallel_chains = 4, seed = 1, diagnostics = T)
+#show the summary
+fit$summary() 
 
 fit$diagnostic_summary()
 
-fit$summary(c("cost", "turnover", "n0", "rFrac", "sigma"))
-
-#compare against the strobl values used to simulate the data
-true_params |>
-  mutate(rFrac = R0 / (S0 + R0)) |>
-  select(cost, turnover, n0, rFrac)
 
 
 ```
+
+```{r}
+pars <- c("cost", "turnover", "n0", "rFrac", "K", "rS", "sigma")
+np   <- nuts_params(fit)          # divergences, treedepth, energy per iteration
+
+# trace plots, divergent iterations marked as red ticks under each panel
+mcmc_parcoord(fit$draws(pars), np = np)
+
+```
+

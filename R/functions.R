@@ -225,3 +225,72 @@ predict_atx_ttp <- function(tau, ...){
   return(ct_ttp * (1 + benefit))
 }
 
+### fitting ##
+# build the Stan data list for one patient
+make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals = list()) {
+  patient_data <- load_bruchowsky_patients(patient_id)[[as.character(patient_id)]]
+  if (first_cycle) patient_data <- filter(patient_data, CycleId == 1)
+  
+  days <- 0:max(patient_data$Time)
+  treatment_indicator <- as.integer(patient_data$DrugConcentration[findInterval(days, patient_data$Time)])
+  obs <- patient_data |> filter(!is.na(PSA))
+  
+  c(list(n_obs               = nrow(obs),
+         measurement_times   = obs$Time,
+         PSA_norm            = obs$PSA,
+         n_days              = length(treatment_indicator),
+         treatment_indicator = treatment_indicator,
+         run_diagnostics     = 1),
+    fixed_vals,
+    priors)
+}
+
+# fit a set of patients and save one .rds (+ CSVs) per patient
+fit_patients <- function(patient_ids=NULL,
+                         stan_file,
+                         priors,
+                         fixed_vals  = list(dD = 1.5),
+                         first_cycle = FALSE,
+                         out_dir     = here::here("fits", paste0("free_rs_K_", if (first_cycle) "first_cycle" else "full_history")),
+                         overwrite   = FALSE,
+                         init        = NULL,
+                         ...) {                       # extra args go to $sample(), e.g. chains, adapt_delta, seed
+  ##if null fit all
+  if (is.null(patient_ids)) {
+    patient_ids <- list.files(here::here("dataTanaka/Bruchovsky_et_al"), pattern = "^patient\\d+\\.txt$") |>
+      parse_number() |>
+      sort()
+  }
+  
+  
+  mod <- cmdstan_model(stan_file)
+  csv_dir <- file.path(out_dir, "csv")
+  dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+  
+  message("model: ", basename(stan_file), " | out: ", out_dir,
+          " | patients: ", paste(patient_ids, collapse = ", "), " | overwrite: ", overwrite)
+  
+  fits <- list()
+  for (patient_id in patient_ids) {
+    fit_path <- make_fit_path(patient_id, dir = out_dir)
+    if (file.exists(fit_path) && !overwrite) { message("patient ", patient_id, ": exists, skipping"); next }
+    
+    stan_data <- make_stan_data(patient_id, first_cycle, priors, fixed_vals)
+    
+    fit <- tryCatch(
+      mod$sample(data = stan_data, init = init,
+                 output_dir = csv_dir, output_basename = sprintf("patient%03d", patient_id), ...),
+      error = function(e) { message("patient ", patient_id, " failed: ", conditionMessage(e)); NULL }
+    )
+    if (is.null(fit)) next
+    
+    if (all(fit$return_codes() == 0)) {
+      fit$save_object(fit_path)
+    } else {
+      message("patient ", patient_id, ": ", sum(fit$return_codes() != 0), " chain(s) failed, not saved")
+    }
+    fits[[as.character(patient_id)]] <- fit
+  }
+  invisible(fits)
+}
+
