@@ -1,13 +1,14 @@
 ```{r}
 pacman::p_load(tidyverse, bayesplot, tidybayes, cmdstanr)
+source("functions.R")
 ```
 
 
 ```{r}
 #load in the patient and print summary of fitted parameters
-patient_id = 85
+patient_id = 04
 
-target_dir = here::here("fits/free_rs_K_full_history")
+target_dir = here::here("fits/free_rs_K_first_cycle")
 fit_path <- make_fit_path(patient_id = patient_id, dir = target_dir)
 fit <- readRDS(fit_path)
 

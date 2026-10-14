@@ -180,7 +180,7 @@ We can also check how much the posteriors moved from the priors.
 
 ```{r}
 #clauded up a function to plot posteriors versus priors
-plot_prior_posterior <- function(patient_id, n = 4000) {
+plot_prior_posterior <- function(patient_id, n = 4000, kappa = .2) {
   first_fit <- readRDS(make_fit_path(patient_id, here::here("fits/free_rs_K_first_cycle")))
   full_fit  <- readRDS(make_fit_path(patient_id, here::here("fits/free_rs_K_full_history")))
   
@@ -192,28 +192,48 @@ plot_prior_posterior <- function(patient_id, n = 4000) {
     K        = rlnorm(n, log(2), .4),
     rS       = rlnorm(n, log(0.019), .25),
     sigma    = rlnorm(n, -2, 1)
-  )
+  ) |>
+    filter(K > n0) #stan constrains K > n0
   
   params <- names(prior_draws)
   get_post <- function(fit) {
     fit$draws(params, format = "draws_df") |> as_tibble() |> select(all_of(params))
   }
   
-  bind_rows(prior            = prior_draws,
-            `first cycle`    = get_post(first_fit),
-            `full history`   = get_post(full_fit),
-            .id = "dist") |>
-    mutate(dist = factor(dist, c("prior", "first cycle", "full history"))) |>
+  draws <- bind_rows(prior            = prior_draws,
+                     `first cycle`    = get_post(first_fit),
+                     `full history`   = get_post(full_fit),
+                     .id = "dist") |>
+    mutate(dist = factor(dist, c("prior", "first cycle", "full history")),
+           #AT score from the same transforms as the stan model
+           AT_score = calc_delta_benefit(kappa = kappa, dR = turnover * rS, K = K,
+                                         rR = (1 - cost) * rS, R0 = rFrac * n0))
+  
+  #report how many draws gave no AT score or fell outside the plot window, since dropping them biases the density
+  n_dropped <- draws |> group_by(dist) |> summarise(dropped = sum(!between(AT_score, -4, 4) | !is.finite(AT_score)))
+  
+  draws |>
     pivot_longer(-dist, names_to = "parameter") |>
+    filter(parameter != "AT_score" | between(value, -4, 4)) |>
     ggplot(aes(value, fill = dist)) +
     geom_density(alpha = .5, colour = NA) +
     facet_wrap(~ parameter, scales = "free") +
     scale_fill_manual(values = c("prior" = "grey70", "first cycle" = "#2a78d6", "full history" = "#eb6834")) +
     theme_classic() +
-    labs(title = paste("Prior and posteriors, patient", patient_id), fill = NULL)
+    labs(title = paste("Prior and posteriors, patient", patient_id),
+         subtitle = paste0("AT score draws non-finite or outside [-4, 4]: ",
+                           paste(n_dropped$dist, n_dropped$dropped, sep = " = ", collapse = ", ")),
+         fill = NULL)
 }
 
 for (id in c(12, 20, 25, 78, 85)) {
+  #skip patients that are missing either fit
+  has_fits <- file.exists(make_fit_path(id, here::here("fits/free_rs_K_first_cycle")),
+                          make_fit_path(id, here::here("fits/free_rs_K_full_history")))
+  if (!all(has_fits)) {
+    message("skipping patient ", id, ": missing fit")
+    next
+  }
   print(plot_prior_posterior(id))
 }
 ```

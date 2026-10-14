@@ -277,6 +277,8 @@ fit_patients <- function(patient_ids=NULL,
     
     stan_data <- make_stan_data(patient_id, first_cycle, priors, fixed_vals)
     
+    if (stan_data$n_obs < 5) next
+    
     fit <- tryCatch(
       mod$sample(data = stan_data, init = init,
                  output_dir = csv_dir, output_basename = sprintf("patient%03d", patient_id), ...),
