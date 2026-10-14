@@ -91,29 +91,55 @@ forward_sim_single_patient <- function(pars, starting_state, schedule, sigma){
   return(out_df_combined)
 }
 
-#loads a list of dfs with patient level observations from trial
-load_bruchowsky_patients <- function(patient_ids){
+#loads a df with patient level observations from trial for one patient
+load_bruchovsky_patient <- function(patient_id){
 
-    out_list <- list()
-    for (id in patient_ids){
+    file_path <- here::here("dataTanaka/Bruchovsky_et_al", sprintf("patient%03d.txt", patient_id))
 
-      file_path <- here::here("dataTanaka/Bruchovsky_et_al", sprintf("patient%03d.txt", id))
+    #load in the df and clean
+    read_csv(file_path, col_names = FALSE) |>
+      rename(PatientID = 1, Date = 2, CPA = 3, LEU = 4, PSA = 5, Testosterone = 6, CycleId = 7, DrugConcentration = 8) |>
+      mutate(Date = ymd_hms(Date),
+             CPA  = parse_number(as.character(CPA)),
+             LEU  = parse_number(as.character(LEU))) |>
+      arrange(Date) |>
+      mutate(Time    = X9 - first(X9), #elapsed time like strobl python loader
+             PSA_raw = PSA,     #normalise
+             PSA     = PSA_raw / first(PSA_raw),
+             segment = consecutive_id(DrugConcentration)) #for solving ODE by segment rather than whole trajec in Stan
+    
+}
+# 
+#Returns an df of treatment segments Stan with rows for each segment start and end date, treatment and number of PSA measurements within segment
+make_segment_df <- function(patient_data_df){
+  #drop rows after last row with PSA
+  patient_data_df <- patient_data_df |>
+    filter(Time <= max(Time[!is.na(PSA)]))
+  #make def where each row is start and end day of segment, and what treatment was given
+  segments <- patient_data_df |> 
+    group_by(segment) |> 
+    summarize(segment_start_time = first(Time),
+              Treatment= first(DrugConcentration)) |> 
+    mutate(segment_end_time = lead(segment_start_time, default = max(patient_data_df$Time))) |> 
+    # some patients have final visit where does changes, but no follow up obs, so a segment would be created but not ended. 
+    filter(segment_end_time > segment_start_time)
+  #count how many rowws with PSA obs fall inside each section
+  counts <- patient_data_df |>
+    mutate(solve_segment = lag(segment)) |>
+    filter(!is.na(PSA), !is.na(solve_segment)) |>
+    count(solve_segment, name = "num_psa_obs")
+  #join the to get num psa obs in segment df
+  segments <- segments |>
+    left_join(counts, by = c("segment" = "solve_segment")) |>
+    mutate(num_psa_obs = replace_na(num_psa_obs, 0L))
+ return(segments)
+}
 
-      #load in the df and clean
-      patient_data <- read_csv(file_path, col_names = FALSE) |>
-        rename(PatientID = 1, Date = 2, CPA = 3, LEU = 4, PSA = 5, Testosterone = 6, CycleId = 7, DrugConcentration = 8) |>
-        mutate(Date = ymd_hms(Date),
-               CPA  = parse_number(as.character(CPA)),  
-               LEU  = parse_number(as.character(LEU))) |>
-        arrange(Date) |>
-        mutate(Time    = X9 - first(X9), #elapsed time like strobl python loader
-               PSA_raw = PSA,     #normalise
-               PSA     = PSA_raw / first(PSA_raw))
 
-      #store the whole df as one list element
-      out_list[[as.character(id)]] <- patient_data
-    }
-
+#loads a list of dfs, one per patient, named by patient id
+load_bruchovsky_list <- function(patient_ids){
+    out_list <- lapply(patient_ids, load_bruchovsky_patient)
+    names(out_list) <- as.character(patient_ids)
     return(out_list)
 }
 
@@ -144,7 +170,7 @@ simulate_best_strobl_fits <- function(sigma, n){
     head(n) |> 
     pull(PatientId)
   
-  clinical_data_list <- load_bruchowsky_patients(top_ids)
+  clinical_data_list <- load_bruchovsky_list(top_ids)
   
   out_list <- list()
   
@@ -228,7 +254,7 @@ predict_atx_ttp <- function(tau, ...){
 ### fitting ##
 # build the Stan data list for one patient
 make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals = list()) {
-  patient_data <- load_bruchowsky_patients(patient_id)[[as.character(patient_id)]]
+  patient_data <- load_bruchovsky_patient(patient_id)
   if (first_cycle) patient_data <- filter(patient_data, CycleId == 1)
   
   days <- 0:max(patient_data$Time)

@@ -63,7 +63,7 @@ source("R/functions.R")
 ```{r}
 best_three_fits <- get_n_best_fits(3)
 
-patient_list <- load_bruchowsky_patients(best_three_fits$PatientId)
+patient_list <- load_bruchovsky_list(best_three_fits$PatientId)
 
 #build schedule
 best_fit_patient_data <- patient_list[[1]]
@@ -108,7 +108,7 @@ ggplot(top_n_sims_long, aes(x=time, y=PSA, color = metric)) +
 closed-loop simulator vs actual data, top 5 patients
 ```{r}
 best5     <- get_n_best_fits(5)
-patients5 <- load_bruchowsky_patients(best5$PatientId)
+patients5 <- load_bruchovsky_list(best5$PatientId)
 
 for (i in 1:nrow(best5)) {
   pid      <- best5$PatientId[i]
