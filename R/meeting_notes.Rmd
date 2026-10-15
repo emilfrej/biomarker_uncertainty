@@ -1,0 +1,122 @@
+---
+title: "analysis"
+output: html_document
+---
+
+```{r warning=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+#packages and custom functions
+source("functions.R")
+pacman::p_load(tidybayes, bayesplot, posterior)
+```
+
+Update since last:
+
+Have gotten the sampler to work with random starts instead of fixing starting points.
+Sampler is running much faster.
+
+
+
+## plot posteriors 
+```{r}
+#AT scores reported in the biomarker paper, drawn as a dashed line on the AT score plot
+paper_at_scores <- tibble(patient = c(12, 20, 25, 78, 85),
+                          AT_score = c(0.270, 0.495, 0.439, 0.552, 0.366),
+                          ci_low   = c(0.259, 0.460, 0.410, 0.511, 0.353),
+                          ci_high  = c(0.288, 0.546, 0.495, 0.666, 0.389))
+
+#clauded up a function to plot posteriors versus priors
+plot_prior_posterior <- function(patient_id, n = 4000, kappa = .2, filter_steady_state) {
+  first_fit <- readRDS(make_fit_path(patient_id, here::here("fits/segmented_first_cycle")))
+  full_fit  <- readRDS(make_fit_path(patient_id, here::here("fits/segmented_full_history")))
+  
+  prior_draws <- tibble(
+    cost     = rbeta(n, 5, 10),
+    turnover = rbeta(n, 2, 2),
+    n0       = rbeta(n, 2, 2),
+    rFrac    = rbeta(n, 2, 30),
+    K        = rlnorm(n, log(2), .4),
+    rS       = rlnorm(n, log(0.027), .025),
+    sigma    = rlnorm(n, -2, 1)
+  ) |>
+    filter(K > n0) #stan constrains K > n0
+  
+  params <- names(prior_draws)
+  get_post <- function(fit) {
+    fit$draws(params, format = "draws_df") |> as_tibble() |> select(all_of(params))
+  }
+  
+  draws <- bind_rows(prior            = prior_draws,
+                     `first cycle`    = get_post(first_fit),
+                     `full history`   = get_post(full_fit),
+                     .id = "dist") |>
+    mutate(dist = factor(dist, c("prior", "first cycle", "full history")),
+           #AT score from the same transforms as the stan model
+           AT_score = calc_delta_benefit(kappa = kappa, dR = turnover * rS, K = K,
+                                         rR = (1 - cost) * rS, R0 = rFrac * n0))
+  
+  #count posterior draws before and after filtering on eq. (8). The prior is left unfiltered
+  n_before <- count(draws, dist, name = "before")
+  if (filter_steady_state) draws <- filter(draws, dist == "prior" | turnover < (1-1.2*n0/K) * (1-cost) )
+  n_after <- count(draws, dist, name = "after")
+  draw_counts <- left_join(n_before, n_after, by = "dist") |> mutate(after = replace_na(after, 0L)) |>
+    filter(dist != "prior")
+
+  #number of divergent transitions in a fit
+  n_div <- function(fit) sum(fit$diagnostic_summary(quiet = TRUE)$num_divergent)
+
+  fill_colours <- c("prior" = "grey70", "first cycle" = "#2a78d6", "full history" = "#eb6834")
+  subtitle_text <- paste0(if (filter_steady_state) "Draws kept after progression filter: " else "Draws: ",
+                          paste(draw_counts$dist, paste(draw_counts$after, "of", draw_counts$before), collapse = ", "),
+                          "\nDivergences: first cycle ", n_div(first_fit), ", full history ", n_div(full_fit))
+
+  #parameters
+  params_plot <- draws |>
+    select(-AT_score) |>
+    pivot_longer(-dist, names_to = "parameter") |>
+    ggplot(aes(value, fill = dist)) +
+    geom_density(alpha = .5, colour = NA) +
+    facet_wrap(~ parameter, scales = "free") +
+    scale_fill_manual(values = fill_colours) +
+    theme_classic() +
+    labs(title = paste("Prior and posteriors, patient", patient_id), subtitle = subtitle_text, fill = NULL)
+
+  #AT score, with the paper's value as a dashed line. Non-finite scores and scores outside [-4, 4] are left out
+  at_plot <- draws |>
+    filter(between(AT_score, -4, 4)) |>
+    ggplot(aes(AT_score, fill = dist)) +
+    geom_density(alpha = .5, colour = NA) +
+    geom_vline(data = filter(paper_at_scores, patient == patient_id), aes(xintercept = AT_score), linetype = "dashed") +
+    scale_fill_manual(values = fill_colours) +
+    coord_cartesian(xlim = c(-2, 2)) +
+    theme_classic() +
+    labs(title = paste("AT score, patient", patient_id),
+         subtitle = subtitle_text)
+
+  list(params = params_plot, at = at_plot)
+}
+
+for (id in c(12, 20, 25, 78, 85)) {
+  #skip patients that are missing either fit
+  has_fits <- file.exists(make_fit_path(id, here::here("fits/segmented_first_cycle")),
+                          make_fit_path(id, here::here("fits/segmented_full_history")))
+
+  plots <- plot_prior_posterior(id, filter_steady_state = T)
+  print(plots$params)
+  print(plots$at)
+}
+```
+
+
+## Questions
+Follow up on comment on simulation. What parameters would we draw from. 
+How to deal with the steady state
+
+## Next
+Find out why still get divergences. 
+Find out why they AT score bayesian fit doesn't agree.
+Find accetable priors.
+
+
+
+

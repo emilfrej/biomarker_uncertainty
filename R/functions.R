@@ -7,7 +7,7 @@ make_priors <- function(){
     n0_prior       = c(2, 2),
     rFrac_prior    = c(2, 30),
     K_prior        = c(log(2), .4),
-    rS_prior       = c(log(0.019), 0.025),
+    rS_prior       = c(log(0.027), 0.05),
     sigma_prior    = c(-2, 1)
   )
   return(priors)
@@ -275,6 +275,12 @@ predict_atx_ttp <- function(tau, ...){
   benefit <- calc_atx_benefit(tau, ...)
   ct_ttp <- predict_ct_ttp(...)
   return(ct_ttp * (1 + benefit))
+}
+
+#eq. (8) in Gallagher et al.: TRUE when progression under continuous therapy is possible (resistant equilibrium above 1.2 * n0)
+#keeping only draws where this is TRUE gives the posterior conditioned on progression being possible
+progression_possible <- function(cost, turnover, n0, K, prog = 1.2){
+  turnover < (1 - prog * n0 / K) * (1 - cost)
 }
 
 ### fitting ##
