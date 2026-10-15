@@ -2,21 +2,13 @@ pacman::p_load(cmdstanr, tidyverse)
 source(here::here("R/functions.R"))
 set.seed(1)
 
-priors <- list(
-  cost_prior     = c(5, 10),
-  turnover_prior = c(2, 2),
-  n0_prior       = c(2, 2),
-  rFrac_prior    = c(2, 30),
-  K_prior        = c(log(2), .4),
-  rS_prior       = c(log(0.027), 0.025),
-  sigma_prior    = c(-2, 1)
-)
 
-for (cycle in c(TRUE, FALSE)) {
+for (cycle in c(TRUE)) {
   fits <- fit_patients(
-    stan_file   = here::here("stan/free_k_free_rs_prototype_model.stan"),
-    priors      = priors,
+    stan_file   = here::here("stan/model.stan"),
+    priors      = make_priors(),
     first_cycle = cycle,
+    out_dir     = here::here("fits", paste0("segmented_", if (cycle) "first_cycle" else "full_history")), #keep separate from old model fits
     overwrite   = F,
     chains = 4, parallel_chains = 4, adapt_delta = .8
   )

@@ -1,19 +1,5 @@
 functions {
-  int look_up_treatment(real t, array[] int treatment){
-
-    // find out what integer timepoint n_days corresponds to
-    int day = 1; //will since treatment[1] gives the first observation
-    while (day <= t){
-      day += 1;
-    }
-    
-    // check if treatment is on
-    int treatment_indicator = treatment[day];
-    
-    return treatment_indicator;
-  } 
-  
-  vector dpop_dt(real t, vector state, array[] real theta, array[] int D){
+  vector dpop_dt(real t, vector state, array[] real theta, int D){
                    
     // setup params for the ode
     real S  = state[1];
@@ -25,22 +11,28 @@ functions {
     real dR = theta[5];
     real K  = theta[6];
 
-    //look up treatment at time t
-    int D_t = look_up_treatment(t, D);
-    
     vector[2] dy_dt;
-    dy_dt[1] = rS * S * (1 - (S + R) / K) * (1 - dD * D_t) - dS * S;
+    dy_dt[1] = rS * S * (1 - (S + R) / K) * (1 - dD * D) - dS * S;
     dy_dt[2] = rR * R * (1 - (S + R) / K) - dR * R;
     return dy_dt;
   }
 }
 
 data {
+  //segments
+  int<lower=0> n_segments;
+  array[n_segments] int<lower=0> starting_segment_times;
+  array[n_segments] int<lower=0> end_segment_times;
+  array[n_segments] int<lower=0> treatment_indicator;
+  int<lower=1> n_out;
+  array[n_out] real output_times;
+  array[n_segments] int<lower=1, upper=n_out> segment_from_idx;
+  array[n_segments] int<lower=1, upper=n_out> segment_to_idx;
+
+
   int<lower=0> n_obs; // number of obs
-  array[n_obs] real <lower=0> measurement_times; //#day of observation, must be > 0
   array[n_obs] real PSA_norm; //
-  int<lower=1> n_days; // number of days in treatment indicator
-  array[n_days] int <lower=0,upper=1> treatment_indicator; //one value per day 0
+  array[n_obs] int<lower=1, upper=n_out> obs_idx; //which ode state each PSA reading is compared with
   
   real <lower=0> dD;
   
@@ -72,9 +64,9 @@ transformed parameters{
   real dR = turnover * rS;
   
   //make prior over starting state prior
-  vector<lower=0>[2]  starting_state;
-    starting_state[1] = (1 - rFrac) * n0;   // S0
-    starting_state[2] = rFrac * n0; // R0
+  vector<lower=0>[2]  y0;
+    y0[1] = (1 - rFrac) * n0;   // S0
+    y0[2] = rFrac * n0; // R0
   
   //setup theta array for ODE
   array[6] real theta;
@@ -85,12 +77,38 @@ transformed parameters{
   theta[5] = dR;
   theta[6] = K;
   
-  array[n_obs] vector[2] cell_populations = ode_rk45(dpop_dt, starting_state, -1e-6, measurement_times, theta, treatment_indicator); //start a little before first measurement t=0
-  
-  // get sum of cell pops at each time and normalize by initial cell amount. Clamp to 0 when solver gives tiny negative populations
+//array to keep track of ODE states. This is needed since there are some rows with treatment switches but no PSA readings. 
+  array[n_out] vector[2] ode_states;
+
+  for (i in 1:n_segments) {
+    // get index of measurement times for current segment
+    int first_out_time_idx = segment_from_idx[i];
+    int last_out_time_idx = segment_to_idx[i];
+
+    // get when time and state from segment starts from idx
+    real t_start;
+    vector[2] state_at_start;
+    if (i == 1) {
+      t_start = -1e-6;                          
+      state_at_start = y0;
+    } else {
+      t_start = starting_segment_times[i];
+      state_at_start = ode_states[first_out_time_idx - 1];    
+    }
+
+   int treatment = treatment_indicator[i];
+
+    //solve and store ODE states in right indices
+   ode_states[first_out_time_idx:last_out_time_idx] = ode_rk45(dpop_dt, state_at_start, t_start, output_times[first_out_time_idx:last_out_time_idx], theta, treatment);
+  }
+
+  // make new vector the size of PSA obs and get the corresponding ODE solutions
+  array[n_obs] vector[2] likelihood_states = ode_states[obs_idx];
+
+  //some times ODE returns very small but neg values. force these to zero. Claude sugggested reparametrizing to working in log(cells) instead
   vector[n_obs] mu;
   for (i in 1:n_obs){
-    mu[i] = fmax(cell_populations[i][1], 0) + fmax(cell_populations[i][2], 0);
+    mu[i] = fmax(likelihood_states[i][1], 0) + fmax(likelihood_states[i][2], 0);
   }
 }
 
@@ -106,7 +124,6 @@ model {
   
   //likelihood
   PSA_norm ~ normal(mu, sigma);
-
 }
 
 generated quantities{

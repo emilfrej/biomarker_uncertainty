@@ -1,5 +1,18 @@
 pacman::p_load(tidyverse, deSolve)
 
+make_priors <- function(){
+  priors <- list(
+    cost_prior     = c(5, 10),
+    turnover_prior = c(2, 2),
+    n0_prior       = c(2, 2),
+    rFrac_prior    = c(2, 30),
+    K_prior        = c(log(2), .4),
+    rS_prior       = c(log(0.019), 0.025),
+    sigma_prior    = c(-2, 1)
+  )
+  return(priors)
+}
+
 #get n best fits from Strobl fit
 get_n_best_fits <- function(n){
   strobl_fit_results <- read_csv(here::here("AT_costOfResistance_LVModel/data/fits/4params/fitSummaryDf.csv"))
@@ -132,7 +145,20 @@ make_segment_df <- function(patient_data_df){
   segments <- segments |>
     left_join(counts, by = c("segment" = "solve_segment")) |>
     mutate(num_psa_obs = replace_na(num_psa_obs, 0L))
+  #positions of each segment's first and last output time, for slicing output_times and ode_states in Stan
+  output_times <- make_output_times(patient_data_df, segments)
+  segments <- segments |>
+    #get index of segments end time
+    mutate(segment_to_idx   = match(segment_end_time, output_times),
+           segment_from_idx = lag(segment_to_idx, default = 0) + 1)
  return(segments)
+}
+
+#times the ODE solver must report: every PSA day (to compare with data) and every segment end (to start the next segment from)
+#sorted and without duplicates, since the solver needs strictly increasing times. Includes day 0 (start time trick in Stan)
+make_output_times <- function(patient_data_df, segments){
+  psa_times <- patient_data_df$Time[!is.na(patient_data_df$PSA)]
+  sort(unique(c(psa_times, segments$segment_end_time)))
 }
 
 
@@ -252,21 +278,27 @@ predict_atx_ttp <- function(tau, ...){
 }
 
 ### fitting ##
-# build the Stan data list for one patient
+## build the Stan data list for one patient
 make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals = list()) {
   patient_data <- load_bruchovsky_patient(patient_id)
   if (first_cycle) patient_data <- filter(patient_data, CycleId == 1)
   
-  days <- 0:max(patient_data$Time)
-  treatment_indicator <- as.integer(patient_data$DrugConcentration[findInterval(days, patient_data$Time)])
-  obs <- patient_data |> filter(!is.na(PSA))
-  
-  c(list(n_obs               = nrow(obs),
-         measurement_times   = obs$Time,
-         PSA_norm            = obs$PSA,
-         n_days              = length(treatment_indicator),
-         treatment_indicator = treatment_indicator,
-         run_diagnostics     = 1),
+  segments_df  <- make_segment_df(patient_data)
+  output_times <- make_output_times(patient_data, segments_df)
+  obs_df       <- patient_data |> filter(!is.na(PSA))
+  #make list
+  c(list(n_segments             = nrow(segments_df),
+         starting_segment_times = segments_df$segment_start_time,
+         end_segment_times      = segments_df$segment_end_time,
+         treatment_indicator    = segments_df$Treatment,
+         n_out                  = length(output_times),
+         output_times           = output_times,
+         segment_from_idx       = segments_df$segment_from_idx,
+         segment_to_idx         = segments_df$segment_to_idx,
+         n_obs                  = nrow(obs_df),
+         PSA_norm               = obs_df$PSA,
+         obs_idx                = match(obs_df$Time, output_times),
+         run_diagnostics        = 1),
     fixed_vals,
     priors)
 }
