@@ -110,8 +110,6 @@ for (id in c(12, 20, 25, 78, 85)) {
   print(plots$at)
 }
 ```
-
-
 ## Questions
 Follow up on comment on simulation. What parameters would we draw from. 
 

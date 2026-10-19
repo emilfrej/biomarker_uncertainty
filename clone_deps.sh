@@ -7,6 +7,8 @@ REPOS=(
   "https://github.com/KCGallagher/AT_Model_Comparison"
   "https://github.com/MathOnco/AT_costOfResistance_LVModel"
   "https://github.com/ap-browning/robust-adaptive-therapy"
+  "https://github.com/MathOnco/Mathematical-Biomarkers mathematical_biomarkers"
+
 )
 
 cd "$(dirname "$0")"

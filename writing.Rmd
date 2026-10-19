@@ -3,6 +3,8 @@ title: "writing"
 output: html_document
 ---
 
-ODE implementation and data wrangling
-The lotka volterra model is fitted as ODE where the ODE is solved in treatment segments. This means that a starting cell population is inferred and the ODE uses this to solve the cell population up to and including the day when the treatment changes. This is the used as the starting point for the next ODE segment that is solved until up to and including when the treatment swiches back. The data at times contains observations where the treatment is switched despite some of the rows on which a switch in treatment is reported don't contain PSA measurements. 
+ODE implementation and data wrangling The lotka volterra model is fitted as ODE where the ODE is solved in treatment segments. This means that a starting cell population is inferred and the ODE uses this to solve the cell population up to and including the day when the treatment changes. This is the used as the starting point for the next ODE segment that is solved until up to and including when the treatment swiches back. The data at times contains observations where the treatment is switched despite some of the rows on which a switch in treatment is reported don't contain PSA measurements.
 
+DATA:
+
+Zhang: Patients were monitiroed 4-6 weeks. Pt on abiraterone until PSA \< 50% of t1, and then holiday until til PSA returned ≥100% of t1. Either surgical or chemical to maintain castration levels of testosterone. Were taken of trial for radiographic progression or ECOG deteriotation while on treatment.
