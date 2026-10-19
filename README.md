@@ -4,15 +4,19 @@ How well can biomarkers be estimated for a new patient given probing schedule?
 
 
 **Project outline**
+
 Simulate AT schedules.
 - Get hierarchichal model to run
 - Decide on prior
 - SBC to validate
+  
 Get param estimates for a few patients using hierarchical model from Zhang.
 - decide on hierarchichal fit or population level prior
 - show adequacy of model
 - show sensitivity of hyper priors
+
 Simulate responses on different protocols for these params.
+
 Compare against adaptive scheduler. 
 
 
