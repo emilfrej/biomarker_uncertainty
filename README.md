@@ -1,6 +1,6 @@
 **Main goal**
 
-How well can biomarkers be estimated for a new patient given probing schedule?
+Run exactly the biomarkers study but bayesian. How certain are the biomarkers after a given period?
 
 
 **Project outline**
