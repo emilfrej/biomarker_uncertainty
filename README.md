@@ -9,6 +9,7 @@ Simulate AT schedules.
 - Get hierarchichal model to run
 - Decide on prior
 - SBC to validate
+- Show how well biomarkers are calculated
   
 Get param estimates for a few patients using hierarchical model from Zhang.
 - decide on hierarchichal fit or population level prior
