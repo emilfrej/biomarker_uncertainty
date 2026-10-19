@@ -4,6 +4,7 @@ Run exactly the biomarkers study but bayesian. How certain are the biomarkers af
 
 
 **Project outline**
+Get biomarker estimates to compare against.
 
 Simulate AT schedules.
 - Get hierarchichal model to run
