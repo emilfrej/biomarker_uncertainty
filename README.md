@@ -5,7 +5,9 @@ Find out how well we can calculate biomarkers using different scheduling approac
 
 **Project outline**
 
-Get biomarker estimates to compare against. Find out if Stan agrees on the biomarkers for first cycle fits. 
+Get biomarker estimates to compare against. 
+
+Find out if Stan gets similar param values as biomarker study. 
 
 Simulate AT schedules.
 - Get hierarchichal model to run
