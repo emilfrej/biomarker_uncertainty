@@ -40,7 +40,7 @@ how to improve the lotka volterra model? what noise likelihood to assume around 
   - relax fixed values / non-dimensionality
   
   
-**Notes*
+**Notes**
 Maybe doing all of this in python would have been easier. Given all the work kit and strobl has already done. There would have been a lot of functions I could have reused. But then the stan stuff I'm familiar with in R.
 currently passing starting vals directly which likely isn't ideal
 
