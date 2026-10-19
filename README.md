@@ -1,6 +1,6 @@
 **Main goal**
 
-Run exactly the biomarkers study but bayesian. How certain are the biomarkers after a given period?
+Find out how well we can calculate biomarkers using different scheduling approaches. 
 
 
 **Project outline**
