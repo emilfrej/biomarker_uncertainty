@@ -1,0 +1,26 @@
+---
+title: "check_biomarker_implementation"
+output: html_document
+---
+
+Made this notebook to check that I get the same results as Gallagher et al on their parameter estiamtes directly.
+After that, we investigate if median stan draws line up with their estimates.  
+Biomarker values from the From table 8 in biomarker supplemental file
+
+| Patient ID | AT Score | eMDD  | eTTP, d |
+|:----------:|:--------:|:-----:|:-------:|
+| 12         | 0.270    | 0.625 | 588     |
+| 20         | 0.495    | 0.352 | 1144    |
+| 25         | 0.439    | 0.362 | 1292    |
+| 78         | 0.552    | 0.311 | 1235    |
+| 85         | 0.366    | 0.449 | 907     |
+
+We recalculate let them using 
+
+```{r}
+
+```
+
+
+
+

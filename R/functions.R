@@ -8,6 +8,7 @@ make_priors <- function(){
     rFrac_prior    = c(2, 30),
     K_prior        = c(log(2), .4),
     rS_prior       = c(log(0.027), 0.05),
+    dD_prior       = c(log(1.5), 0.5),
     sigma_prior    = c(-2, 1)
   )
   return(priors)
@@ -284,29 +285,54 @@ progression_possible <- function(cost, turnover, n0, K, prog = 1.2){
 }
 
 ### fitting ##
+#make function to build fixed and non fit param values
+make_fixed_val_data <- function(fixed_vals_input = list()){
+  #check if passed params correspond to params in stan model
+  switchable_params <- c("cost", "turnover", "n0", "rFrac", "rS", "K", "dD")
+  unknown_params <- setdiff(names(fixed_vals_input), switchable_params)
+  if (length(unknown_params)) stop("not switchable: ", paste(unknown_params, collapse = ", ")) #complain on every unknown input
+  #make flags so everything not in input is TRUE and fitted
+  flags <- as.integer(!switchable_params %in% names(fixed_vals_input)) #stan takes 1/0
+  flags <- setNames(as.list(flags), paste0("fit_", switchable_params))
+  #set all to zero, and then fill in values from given list
+  vals <- setNames(as.list(rep(0, length(switchable_params))), switchable_params)
+  vals[names(fixed_vals_input)] <- fixed_vals_input
+  vals <- setNames(vals, paste0(names(vals), '_fixed_val'))
+  return(c(flags, vals))
+}
+  
+
 ## build the Stan data list for one patient
-make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals = list()) {
+make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals = list(), run_diagnostics = 1) {
+  
   patient_data <- load_bruchovsky_patient(patient_id)
   if (first_cycle) patient_data <- filter(patient_data, CycleId == 1)
   
+  #make seperate dfs for treatment segment for the ODE Solver in stan and observation df for the likelihood to account for rows with no PSA but treatment info
   segments_df  <- make_segment_df(patient_data)
   output_times <- make_output_times(patient_data, segments_df)
   obs_df       <- patient_data |> filter(!is.na(PSA))
-  #make list
-  c(list(n_segments             = nrow(segments_df),
-         starting_segment_times = segments_df$segment_start_time,
-         end_segment_times      = segments_df$segment_end_time,
-         treatment_indicator    = segments_df$Treatment,
-         n_out                  = length(output_times),
-         output_times           = output_times,
-         segment_from_idx       = segments_df$segment_from_idx,
-         segment_to_idx         = segments_df$segment_to_idx,
-         n_obs                  = nrow(obs_df),
-         PSA_norm               = obs_df$PSA,
-         obs_idx                = match(obs_df$Time, output_times),
-         run_diagnostics        = 1),
-    fixed_vals,
-    priors)
+  
+  
+  #turn it all into list
+  c(
+    list(
+      #data
+      n_segments             = nrow(segments_df),
+      starting_segment_times = segments_df$segment_start_time,
+      end_segment_times      = segments_df$segment_end_time,
+      treatment_indicator    = segments_df$Treatment,
+      n_out                  = length(output_times),
+      output_times           = output_times,
+      segment_from_idx       = segments_df$segment_from_idx,
+      segment_to_idx         = segments_df$segment_to_idx,
+      n_obs                  = nrow(obs_df),
+      obs_idx                = match(obs_df$Time, output_times),
+      PSA_norm               = obs_df$PSA
+      ),
+    make_fixed_val_data(fixed_vals),
+    priors,
+    run_diagnostics = run_diagnostics)
 }
 
 # fit a set of patients and save one .rds (+ CSVs) per patient
