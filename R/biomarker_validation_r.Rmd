@@ -1,0 +1,124 @@
+---
+title: "check_biomarker_implementation"
+output: html_document
+---
+
+```{r}
+pacman::p_load(tidyverse, cmdstanr, here, tidybayes)
+source('functions.R')
+```
+
+check against the param df from the biomarker repo
+
+```{r}
+param_df <- read_csv("../Mathematical_Biomarkers/paper_figures/patient_fits/first_cycle_params.csv")
+param_df |> 
+  mutate(AT_score = calc_delta_benefit(kappa = .2, dR=dR, K=K, rR=rR, R0=R0 )) |> 
+  select(PatientId, AT_score)
+
+```
+
+Made this notebook to check that I get the same results as Gallagher et al on their parameter estiamtes directly. After that, we investigate if median stan draws line up with their estimates.\
+Biomarker values from the From table 8 in biomarker supplemental file
+
+| Patient ID | AT Score | eMDD  | eTTP, d |
+|:----------:|:--------:|:-----:|:-------:|
+|     12     |  0.270   | 0.625 |   588   |
+|     20     |  0.495   | 0.352 |  1144   |
+|     25     |  0.439   | 0.362 |  1292   |
+|     78     |  0.552   | 0.311 |  1235   |
+|     85     |  0.366   | 0.449 |   907   |
+
+We only check the AT score implementation because I can't currently get the same results using the other functions in the repo. But AT scores look exactly right using the python functions, so I'm assuming that I can compare this metric against a Stan model that gets the other ones right. Also looks right against Figure 1 in article.
+
+eMMDs and eTTP look way off in python and this needs to be resolved.
+
+## Check against Stan
+
+We now fit the same parameters using Stan to see if any future discrepancies are due different parameter estimations being wildly different for Bayesian techniques.
+
+According to the supplemental S2.3 the fitted vals were.:
+
+"For this reason, the parameters rS and R0 are set to values from the literature quoted in Table S2, while the cost of resistance if given a default value of 1−rR/rS = 0.1 ... Furthermore, to ensure the identifiability of the model in this reduced information context, we also exclude the initial tumor density N0 from the parameter fitting; instead, this is set equal to the first recorded PSA measurement (normalized relative to the maximal PSA value recorded). We therefore *only fit the turnover (defined as d/rS) and K*"
+
+**fixed** rS = 0.027 rFrac = 0.00001 R0 = 0.00001 \* n0 - first cycle param csv says 0.0001, where as table 2 in supplemental says 0.001 cost = 0.1 dD = 1.5 n0 - first measurement, and since it the data is normalized by first measurement, this is always 1.
+
+**estimated** turnover K free Sigma - since we need to assume a noise model
+
+```{r}
+ids <- c(12,20,25,78,85)
+fixed_vals <- c(rS=0.027, rFrac = 0.00001, cost = 0.1, dD = 1.5, n0 = 1)
+
+fits <- list()
+for (id in ids){
+  stan_data <- make_stan_data(id, first_cycle = T, make_priors(), fixed_vals = fixed_vals, prior_only = 0, run_diagnostics=0) 
+  model <- cmdstan_model(here("stan/model_switchable.stan"))
+  fit <- model$sample(data = stan_data, chains = 4, parallel_chains = 4, refresh = 100, init = 2)
+  fits <- append(fits, fit)
+}
+
+stan_data <- make_stan_data(id, first_cycle = T, make_priors(), fixed_vals = fixed_vals, prior_only = 1, run_diagnostics=0) 
+pror_model <- cmdstan_model(here("stan/model_switchable.stan"))
+prior_fit <- model$sample(data = stan_data, chains = 4, parallel_chains = 4, refresh = 100, init = 2)
+```
+
+```{r}
+ids <- c(12, 20, 25, 78, 85)
+fixed_vals <- c(rS = 0.027, rFrac = 0.00001, cost = 0.1, dD = 1.5, n0 = 1)
+model <- cmdstan_model(here("stan/model_switchable.stan"))
+
+fits <- list()
+for (id in ids) {
+  stan_data <- make_stan_data(id, first_cycle = TRUE, make_priors(), fixed_vals = fixed_vals)
+  fits[[as.character(id)]] <- model$sample(data = stan_data, chains = 4, parallel_chains = 4, init = 2)
+}
+# priors don't depend on patient data, so one prior-only run covers every patient
+prior_fit <- model$sample(data = modifyList(stan_data, list(prior_only = 1)),
+                          chains = 4, parallel_chains = 4, init = 2)
+
+```
+
+```{r}
+get_at_draws <- function(fit, kappa = .2) {
+  spread_draws(fit$draws(), turnover, K, cost, rR, dR, n0, rFrac) |>
+    mutate(AT_score     = calc_delta_benefit(kappa = kappa, dR = dR, K = K, rR = rR, R0 = rFrac * n0),
+           can_progress = progression_possible(cost, turnover, n0, K))
+}
+
+at_draws <- map_dfr(fits, get_at_draws, .id = "PatientId") |>
+  mutate(PatientId = as.integer(PatientId))
+prior_at <- get_at_draws(prior_fit)
+
+count(at_draws, PatientId, can_progress)   # how much each patient loses to the filter
+
+at_draws <- filter(at_draws, can_progress)   # prior is left unfiltered
+
+paper_at <- param_df |>
+  filter(PatientId %in% ids) |>
+  mutate(AT_score = calc_delta_benefit(kappa = .2, dR = dR, K = K, rR = rR, R0 = R0))
+at_medians <- at_draws |> group_by(PatientId) |> median_qi(AT_score)
+
+ggplot(at_draws, aes(AT_score)) +
+  # no PatientId, so it shows in every panel. Unfiltered prior has AT scores in the thousands, so only draws inside the plotted window go into the density
+  geom_density(data = prior_at, aes(x=AT_score))+
+  geom_density(fill = "#2a78d6", alpha = .5, colour = NA) +
+  geom_vline(data = at_medians, aes(xintercept = AT_score)) +
+  geom_vline(data = paper_at, aes(xintercept = AT_score), linetype = "dashed", colour = "red") +
+  facet_wrap(~ PatientId, scales = "free_y") +
+  coord_cartesian(xlim = c(0, 10)) +
+  theme_classic()
+```
+
+```{r}
+ggplot(at_draws, aes(K)) +
+  geom_density(data = select(prior_at, K), fill = "grey80", colour = NA) +  # no PatientId, so it shows in every panel
+  geom_density(fill = "#2a78d6", alpha = .5, colour = NA) +
+  facet_wrap(~ PatientId, scales = "free_y") +
+  theme_classic()
+
+ggplot(at_draws, aes(turnover)) +
+  geom_density(data = select(prior_at, turnover), fill = "grey80", colour = NA) +  # no PatientId, so it shows in every panel
+  geom_density(fill = "#2a78d6", alpha = .5, colour = NA) +
+  facet_wrap(~ PatientId, scales = "free_y") +
+  theme_classic()
+```

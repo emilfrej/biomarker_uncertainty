@@ -3,10 +3,10 @@ pacman::p_load(tidyverse, deSolve)
 make_priors <- function(){
   priors <- list(
     cost_prior     = c(5, 10),
-    turnover_prior = c(2, 2),
+    turnover_prior = c(0, 1),
     n0_prior       = c(2, 2),
     rFrac_prior    = c(2, 30),
-    K_prior        = c(log(2), .4),
+    K_prior        = c(2, 5), #uniform bounds
     rS_prior       = c(log(0.027), 0.05),
     dD_prior       = c(log(1.5), 0.5),
     sigma_prior    = c(-2, 1)
@@ -287,6 +287,7 @@ progression_possible <- function(cost, turnover, n0, K, prog = 1.2){
 ### fitting ##
 #make function to build fixed and non fit param values
 make_fixed_val_data <- function(fixed_vals_input = list()){
+  fixed_vals_input <- as.list(fixed_vals_input)
   #check if passed params correspond to params in stan model
   switchable_params <- c("cost", "turnover", "n0", "rFrac", "rS", "K", "dD")
   unknown_params <- setdiff(names(fixed_vals_input), switchable_params)
@@ -303,7 +304,7 @@ make_fixed_val_data <- function(fixed_vals_input = list()){
   
 
 ## build the Stan data list for one patient
-make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals = list(), run_diagnostics = 1) {
+make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals = list(), run_diagnostics = 1, prior_only = 0) {
   
   patient_data <- load_bruchovsky_patient(patient_id)
   if (first_cycle) patient_data <- filter(patient_data, CycleId == 1)
@@ -331,6 +332,7 @@ make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals =
       PSA_norm               = obs_df$PSA
       ),
     make_fixed_val_data(fixed_vals),
+    prior_only = prior_only,
     priors,
     run_diagnostics = run_diagnostics)
 }
@@ -386,3 +388,78 @@ fit_patients <- function(patient_ids=NULL,
   invisible(fits)
 }
 
+
+### plots  ###
+#plot posteriors and priors
+plot_prior_posterior <- function(patient_id, n = 4000, kappa = .2, filter_steady_state) {
+  first_fit <- readRDS(make_fit_path(patient_id, here::here("fits/segmented_first_cycle")))
+  full_fit  <- readRDS(make_fit_path(patient_id, here::here("fits/segmented_full_history")))
+  
+  prior_draws <- tibble(
+    cost     = rbeta(n, 5, 10),
+    turnover = rbeta(n, 2, 2),
+    n0       = rbeta(n, 2, 2),
+    rFrac    = rbeta(n, 2, 30),
+    K        = rlnorm(n, log(2), .4),
+    rS       = rlnorm(n, log(0.027), .05),
+    sigma    = rlnorm(n, -2, 1)
+  ) |>
+    filter(K > n0) #stan constrains K > n0
+  
+  params <- names(prior_draws)
+  get_post <- function(fit) {
+    fit$draws(params, format = "draws_df") |> as_tibble() |> select(all_of(params))
+  }
+  
+  draws <- bind_rows(prior            = prior_draws,
+                     `first cycle`    = get_post(first_fit),
+                     `full history`   = get_post(full_fit),
+                     .id = "dist") |>
+    mutate(dist = factor(dist, c("prior", "first cycle", "full history")),
+           #AT score from the same transforms as the stan model
+           AT_score = calc_delta_benefit(kappa = kappa, dR = turnover * rS, K = K,
+                                         rR = (1 - cost) * rS, R0 = rFrac * n0))
+  
+  #count posterior draws before and after filtering on eq. (8). The prior is left unfiltered
+  n_before <- count(draws, dist, name = "before")
+  if (filter_steady_state) draws <- filter(draws, dist == "prior" | turnover < (1-1.2*n0/K) * (1-cost) )
+  n_after <- count(draws, dist, name = "after")
+  draw_counts <- left_join(n_before, n_after, by = "dist") |> mutate(after = replace_na(after, 0L)) |>
+    filter(dist != "prior")
+  
+  #number of divergent transitions in a fit
+  n_div <- function(fit) sum(fit$diagnostic_summary(quiet = TRUE)$num_divergent)
+  #largest rhat across the plotted parameters
+  max_rhat <- function(fit) round(max(fit$summary(params, "rhat")$rhat, na.rm = TRUE), 3)
+  
+  fill_colours <- c("prior" = "grey70", "first cycle" = "#2a78d6", "full history" = "#eb6834")
+  subtitle_text <- paste0(if (filter_steady_state) "Draws kept after steady state filter: " else "Draws: ",
+                          paste(draw_counts$dist, paste(draw_counts$after, "of", draw_counts$before), collapse = ", "),
+                          "\nDivergences: first cycle ", n_div(first_fit), ", full history ", n_div(full_fit),
+                          "\nMax Rhat: first cycle ", max_rhat(first_fit), ", full history ", max_rhat(full_fit))
+  
+  #parameters
+  params_plot <- draws |>
+    select(-AT_score) |>
+    pivot_longer(-dist, names_to = "parameter") |>
+    ggplot(aes(value, fill = dist)) +
+    geom_density(alpha = .5, colour = NA) +
+    facet_wrap(~ parameter, scales = "free") +
+    scale_fill_manual(values = fill_colours) +
+    theme_classic() +
+    labs(title = paste("Prior and posteriors, patient", patient_id), subtitle = subtitle_text, fill = NULL)
+  
+  #AT score, with the paper's value as a dashed line. Non-finite scores and scores outside [-4, 4] are left out
+  at_plot <- draws |>
+    filter(between(AT_score, -4, 4)) |>
+    ggplot(aes(AT_score, fill = dist)) +
+    geom_density(alpha = .5, colour = NA) +
+    geom_vline(data = filter(paper_at_scores, patient == patient_id), aes(xintercept = AT_score), linetype = "dashed") +
+    scale_fill_manual(values = fill_colours) +
+    coord_cartesian(xlim = c(-2, 2)) +
+    theme_classic() +
+    labs(title = paste("AT score, patient", patient_id),
+         subtitle = subtitle_text)
+  
+  list(params = params_plot, at = at_plot)
+}
