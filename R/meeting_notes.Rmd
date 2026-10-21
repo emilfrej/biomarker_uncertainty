@@ -113,6 +113,9 @@ for (id in c(12, 20, 25, 78, 85)) {
 ## Questions
 Follow up on comment on simulation. What parameters would we draw from. 
 
+
+Median AT score `r rnorm()`
+
 How to deal with the steady state
 
 ## Next

@@ -79,8 +79,8 @@ parameters {
   array[fit_n0] real<lower=0, upper=1> n0_free;
   array[fit_rFrac] real<lower=0, upper=1> rFrac_free;
   array[fit_rS] real<lower=0> rS_free;
-  array[fit_K] real<lower=K_prior[1], upper=K_prior[2]> K_free; 
-  array[fit_dD] real<lower=2, upper=5> dD_free;
+  array[fit_K] real<lower=2.5, upper=5> K_free; 
+  array[fit_dD] real<lower=0> dD_free;
   
   real<lower=0> sigma;
 }

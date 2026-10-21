@@ -43,24 +43,7 @@ According to the supplemental S2.3 the fitted vals were.:
 
 **fixed** rS = 0.027 rFrac = 0.00001 R0 = 0.00001 \* n0 - first cycle param csv says 0.0001, where as table 2 in supplemental says 0.001 cost = 0.1 dD = 1.5 n0 - first measurement, and since it the data is normalized by first measurement, this is always 1.
 
-**estimated** turnover K free Sigma - since we need to assume a noise model
-
-```{r}
-ids <- c(12,20,25,78,85)
-fixed_vals <- c(rS=0.027, rFrac = 0.00001, cost = 0.1, dD = 1.5, n0 = 1)
-
-fits <- list()
-for (id in ids){
-  stan_data <- make_stan_data(id, first_cycle = T, make_priors(), fixed_vals = fixed_vals, prior_only = 0, run_diagnostics=0) 
-  model <- cmdstan_model(here("stan/model_switchable.stan"))
-  fit <- model$sample(data = stan_data, chains = 4, parallel_chains = 4, refresh = 100, init = 2)
-  fits <- append(fits, fit)
-}
-
-stan_data <- make_stan_data(id, first_cycle = T, make_priors(), fixed_vals = fixed_vals, prior_only = 1, run_diagnostics=0) 
-pror_model <- cmdstan_model(here("stan/model_switchable.stan"))
-prior_fit <- model$sample(data = stan_data, chains = 4, parallel_chains = 4, refresh = 100, init = 2)
-```
+**estimated** turnover K[2.5,5] free Sigma - since we need to assume a noise model
 
 ```{r}
 ids <- c(12, 20, 25, 78, 85)
@@ -89,27 +72,7 @@ at_draws <- map_dfr(fits, get_at_draws, .id = "PatientId") |>
   mutate(PatientId = as.integer(PatientId))
 prior_at <- get_at_draws(prior_fit)
 
-count(at_draws, PatientId, can_progress)   # how much each patient loses to the filter
 
-at_draws <- filter(at_draws, can_progress)   # prior is left unfiltered
-
-paper_at <- param_df |>
-  filter(PatientId %in% ids) |>
-  mutate(AT_score = calc_delta_benefit(kappa = .2, dR = dR, K = K, rR = rR, R0 = R0))
-at_medians <- at_draws |> group_by(PatientId) |> median_qi(AT_score)
-
-ggplot(at_draws, aes(AT_score)) +
-  # no PatientId, so it shows in every panel. Unfiltered prior has AT scores in the thousands, so only draws inside the plotted window go into the density
-  geom_density(data = prior_at, aes(x=AT_score))+
-  geom_density(fill = "#2a78d6", alpha = .5, colour = NA) +
-  geom_vline(data = at_medians, aes(xintercept = AT_score)) +
-  geom_vline(data = paper_at, aes(xintercept = AT_score), linetype = "dashed", colour = "red") +
-  facet_wrap(~ PatientId, scales = "free_y") +
-  coord_cartesian(xlim = c(0, 10)) +
-  theme_classic()
-```
-
-```{r}
 ggplot(at_draws, aes(K)) +
   geom_density(data = select(prior_at, K), fill = "grey80", colour = NA) +  # no PatientId, so it shows in every panel
   geom_density(fill = "#2a78d6", alpha = .5, colour = NA) +
@@ -121,4 +84,35 @@ ggplot(at_draws, aes(turnover)) +
   geom_density(fill = "#2a78d6", alpha = .5, colour = NA) +
   facet_wrap(~ PatientId, scales = "free_y") +
   theme_classic()
+```
+
+```{r}
+count(at_draws, PatientId, can_progress)  # how much each patient loses to the filter
+
+at_draws <- filter(at_draws, can_progress)   # prior is left unfiltered
+prior_at <- filter(prior_at, can_progress)
+
+
+paper_at <- param_df |>
+  filter(PatientId %in% ids) |>
+  mutate(AT_score = calc_delta_benefit(kappa = .2, dR = dR, K = K, rR = rR, R0 = R0))
+at_medians <- at_draws |> group_by(PatientId) |> median_qi(AT_score)
+
+ggplot(at_draws, aes(AT_score)) +
+  # no PatientId, so it shows in every panel. Unfiltered prior has AT scores in the thousands, so only draws inside the plotted window go into the density
+  geom_density(data = prior_at, aes(x=AT_score), fill = "grey", colour = NA)+
+  geom_density(fill = "#2a78d6", alpha = .5, colour = NA) +
+  geom_vline(data = paper_at, aes(xintercept = AT_score), linetype = "dashed", colour = "red") +
+  facet_wrap(~ PatientId, scales = "free_y") +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_classic()
+```
+
+So looks like with the first cycle approach that the AT_score could never have been less.
+
+```{r}
+prior_draws_no_progression_filter <- get_at_draws(prior_fit)
+ggplot(prior_draws_no_progression_filter, aes(x=AT_score)) +
+  geom_density(aes(fill = "prior_no_progression_filter"), colour = NA, alpha = .5) +
+  xlim(-5,5)
 ```
