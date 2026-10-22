@@ -1,5 +1,5 @@
 ---
-title: "sim_1_zhang_patient"
+title: "sim_zhang_cohort"
 output: html_document
 ---
 
