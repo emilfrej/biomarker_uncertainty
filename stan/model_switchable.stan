@@ -76,10 +76,10 @@ parameters {
   //make parameters array length 1 if flag is on
   array[fit_cost] real<lower=0, upper=1> cost_free;
   array[fit_turnover] real<lower=0, upper=1> turnover_free;
-  array[fit_n0] real<lower=0, upper=1> n0_free;
   array[fit_rFrac] real<lower=0, upper=1> rFrac_free;
   array[fit_rS] real<lower=0> rS_free;
   array[fit_K] real<lower=2.5, upper=5> K_free; 
+  array[fit_n0] real<lower=0, upper=K_free*(1-turnover_free/(1-cost_free))/1.2> n0_free;
   array[fit_dD] real<lower=0> dD_free;
   
   real<lower=0> sigma;

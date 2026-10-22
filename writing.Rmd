@@ -1,10 +1,35 @@
 ---
 title: "writing"
 output: html_document
+bibliography: references.bib
 ---
-
-ODE implementation and data wrangling The lotka volterra model is fitted as ODE where the ODE is solved in treatment segments. This means that a starting cell population is inferred and the ODE uses this to solve the cell population up to and including the day when the treatment changes. This is the used as the starting point for the next ODE segment that is solved until up to and including when the treatment swiches back. The data at times contains observations where the treatment is switched despite some of the rows on which a switch in treatment is reported don't contain PSA measurements. This is different to biomarker paper that drops all NON psa observations.
 
 DATA:
 
-Zhang: Patients were monitiroed 4-6 weeks. Pt on abiraterone until PSA \< 50% of t1, and then holiday until til PSA returned ≥100% of t1. Either surgical or chemical to maintain castration levels of testosterone. Were taken of trial for radiographic progression or ECOG deteriotation while on treatment.
+Zhang: Patients were monitored 4-6 weeks. Pt on abiraterone until PSA \< 50% of t1, and then holiday until til PSA returned ≥100% of t1. Either surgical or chemical to maintain castration levels of testosterone. Were taken of trial for radio graphic progression or ECOG deterioration while on treatment [@zhang2022].
+
+### Model implementation
+
+The ODE models two populations of cancer cells: treatment-sensitive cells (S) and treatment-resistant cells (R). The model has been used to study how scheduling treatment breaks could delay the emergence of resistance in prostate cancer.
+
+$$
+\frac{dS}{dt} = r_SS\cdot(1-\frac{S+R}{K}) \cdot (1-d_D D) - dS \\\frac{dR}{dt} = r_RR\cdot(1-\frac{S+R}{K}) - dR
+$$
+
+where $r_S, r_R$ are proliferation rates, $d$ is the cell death rate, $K$ is the carrying capacity, $D$ is the amount of drug applied, and $d_D$ is the drug-induced cell death rate. We assume that the normalized value of the biomarker prostate-specific antigen, $PSA_t$, is normally distributed around the total cell population:
+
+$$
+PSA_t \sim Normal(S_t+R_t, \sigma) 
+$$
+
+Progression is typically defined as the total cell population exceeding 1.2 times its initial size, that is, when $S+R > 1.2(S_0+R_0)$. However, the ODE can settle into a steady state where the tumor is fully resistant but the total cell population is less than 1.2 times its initial size. We find that we only observe progression under continuous treatment when
+
+$$
+1.2(S_0+R_0) < K(1 - \frac{d}{r_R})
+$$
+
+#### ODE is solved Treatment segments
+
+ODE implementation and data wrangling The Lotka Volterra model is fitted as ODE where the ODE is solved in treatment segments. This means that a starting cell population is inferred and the ODE uses this to solve the cell population up to and including the day when the treatment changes. This is the used as the starting point for the next ODE segment that is solved until up to and including when the treatment switches back. The data at times contains observations where the treatment is switched despite some of the rows on which a switch in treatment is reported don't contain PSA measurements. This is different to biomarker paper that drops all NON psa observations. Per stan user guide.
+
+#### 

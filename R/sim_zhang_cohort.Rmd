@@ -2,4 +2,23 @@
 title: "sim_zhang_cohort"
 output: html_document
 ---
+This notebook simulates a zhang patient, attempts to free up as many parameters as possible in the ODE model. After that, it simulates an entire zhang cohort and sees if a hierarchichal implementation of the stan script will fix that.
+
+```{r}
+
+## draw parameter values
+## make sure it clears progression
+
+## simulate visits until progression
+## set treatment to true
+## while not-progressed
+### pick next checkup time
+### Simulate trajectory until next checkup
+#### emit PSA, store underlying States. 
+### check progression
+### check treatment switch
+
+
+
+```
 
