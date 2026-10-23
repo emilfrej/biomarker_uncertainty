@@ -28,6 +28,8 @@ $$
 1.2(S_0+R_0) < K(1 - \frac{d}{r_R})
 $$
 
+Bounds. We place a bound on K≥N0. If not, the carrying capacity of the system could be smaller than the initial tumor volume.
+
 #### ODE is solved Treatment segments
 
 ODE implementation and data wrangling The Lotka Volterra model is fitted as ODE where the ODE is solved in treatment segments. This means that a starting cell population is inferred and the ODE uses this to solve the cell population up to and including the day when the treatment changes. This is the used as the starting point for the next ODE segment that is solved until up to and including when the treatment switches back. The data at times contains observations where the treatment is switched despite some of the rows on which a switch in treatment is reported don't contain PSA measurements. This is different to biomarker paper that drops all NON psa observations. Per stan user guide.

@@ -2,11 +2,11 @@ pacman::p_load(tidyverse, deSolve)
 
 make_priors <- function(){
   priors <- list(
-    cost_prior     = c(5, 10),
-    turnover_prior = c(0, 1),
-    n0_prior       = c(2, 2),
-    rFrac_prior    = c(2, 30),
-    K_prior        = c(2, 5), #uniform bounds
+    cost_prior     = c(0, 1), #uniform bounds
+    turnover_prior = c(0, 1), #uniform bounds
+    n0_prior       = c(0, 1), #uniform bounds
+    rFrac_prior    = c(0, 1), #uniform bounds
+    K_prior        = c(log(2), 0.4), #lognormal
     rS_prior       = c(log(0.027), 0.05),
     dD_prior       = c(log(1.5), 0.5),
     sigma_prior    = c(-2, 1)
@@ -380,6 +380,10 @@ fit_patients <- function(patient_ids=NULL,
     
     if (all(fit$return_codes() == 0)) {
       fit$save_object(fit_path)
+      #save priors and settings next to the fit so we know what produced it, e.g. fit_patient012_settings.rds
+      saveRDS(list(priors = priors, fixed_vals = fixed_vals, first_cycle = first_cycle,
+                   stan_file = stan_file, stan_code = mod$code(), date = Sys.time()),
+              sub("\\.rds$", "_settings.rds", fit_path))
     } else {
       message("patient ", patient_id, ": ", sum(fit$return_codes() != 0), " chain(s) failed, not saved")
     }

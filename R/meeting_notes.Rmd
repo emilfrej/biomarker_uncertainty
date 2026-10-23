@@ -7,15 +7,10 @@ output: html_document
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 #packages and custom functions
 source("functions.R")
-pacman::p_load(tidybayes, bayesplot, posterior)
+pacman::p_load(tidybayes, bayesplot, posterior, cmdstanr)
 ```
 
 Update since last:
-
-Have gotten the sampler to work with random starts instead of fixing starting points.
-
-Sampler is running much faster.
-
 
 ## plot posteriors 
 ```{r}
@@ -31,15 +26,15 @@ plot_prior_posterior <- function(patient_id, n = 4000, kappa = .2, filter_steady
   full_fit  <- readRDS(make_fit_path(patient_id, here::here("fits/segmented_full_history")))
   
   prior_draws <- tibble(
-    cost     = rbeta(n, 5, 10),
-    turnover = rbeta(n, 2, 2),
-    n0       = rbeta(n, 2, 2),
-    rFrac    = rbeta(n, 2, 30),
+    cost     = runif(n, 0, 1),
+    turnover = runif(n, 0, 1),
+    n0       = runif(n, 0, 1),
+    rFrac    = runif(n, 0, 1),
     K        = rlnorm(n, log(2), .4),
     rS       = rlnorm(n, log(0.027), .05),
     sigma    = rlnorm(n, -2, 1)
   ) |>
-    filter(K > n0) #stan constrains K > n0
+    filter(K > n0) #stan bounds K below by n0
   
   params <- names(prior_draws)
   get_post <- function(fit) {
@@ -96,9 +91,11 @@ plot_prior_posterior <- function(patient_id, n = 4000, kappa = .2, filter_steady
     labs(title = paste("AT score, patient", patient_id),
          subtitle = subtitle_text)
 
-  list(params = params_plot, at = at_plot)
+  list(params = params_plot, at = at_plot, draws = draws)
 }
 
+#median and 95% interval of the AT score per patient and fit, filled in by the loop
+at_summaries <- list()
 for (id in c(12, 20, 25, 78, 85)) {
   #skip patients that are missing either fit
   has_fits <- file.exists(make_fit_path(id, here::here("fits/segmented_first_cycle")),
@@ -108,20 +105,189 @@ for (id in c(12, 20, 25, 78, 85)) {
   plots <- plot_prior_posterior(id, filter_steady_state = T)
   print(plots$params)
   print(plots$at)
+
+  #non-finite AT scores (log of a negative number) are left out of the summary
+  at_summaries[[as.character(id)]] <- plots$draws |>
+    filter(dist != "prior", is.finite(AT_score)) |>
+    group_by(dist) |>
+    median_qi(AT_score) |>
+    mutate(patient = id)
 }
 ```
+
+## AT scores versus paper
+```{r}
+at_table <- bind_rows(at_summaries) |>
+  select(patient, fit = dist, AT_score, .lower, .upper) |>
+  left_join(paper_at_scores, by = "patient", suffix = c("", "_paper")) |>
+  mutate(paper_in_interval = between(AT_score_paper, .lower, .upper))
+
+knitr::kable(at_table, digits = 3)
+```
+
+Median AT score is above the paper's value in `r sum(at_table$AT_score > at_table$AT_score_paper)` of `r nrow(at_table)` fits. The paper's value is inside our 95% interval in `r sum(at_table$paper_in_interval)` of them. The full history fits sit closer to the paper than the first cycle fits for most patients.
+
+## Freeing parameters one at a time, probing cycle
+Step 0 is the probing cycle fit from biomarker_validation_r.Rmd: first cycle only, rS, rFrac, cost, dD and n0 fixed, turnover, K and sigma estimated. K has no upper bound and is bounded below by n0. Each step after that frees one more parameter and keeps the ones freed before it. The order goes from what the first cycle should identify most easily to least: n0 (first PSA measurement), dD (decline on treatment), rS (tight prior), cost and rFrac (resistance barely shows in the first cycle).
+
+```{r}
+probing_ids   <- c(12, 20, 25, 78, 85)
+probing_fixed <- list(rS = 0.027, rFrac = 0.00001, cost = 0.1, dD = 1.5, n0 = 1)
+free_order    <- c("n0", "rFrac","cost","dD", "rS" )
+
+#fixed values for each step. Step 0 is the probing cycle fit, each step after frees one more parameter
+steps <- map(0:length(free_order), \(i) probing_fixed[setdiff(names(probing_fixed), head(free_order, i))])
+names(steps) <- c("0_probing", paste0(seq_along(free_order), "_free_", free_order))
+
+#fits and their settings are saved per step. Saved fits are skipped, so this only fits what is missing
+for (step in names(steps)) {
+  fit_patients(probing_ids, stan_file = here::here("stan/model_switchable.stan"), priors = make_priors(),
+               fixed_vals = steps[[step]], first_cycle = TRUE,
+               out_dir = here::here("fits/probing_cycle", step),
+               chains = 4, parallel_chains = 4, seed = 1, refresh = 500, adapt_delta = .95)
+}
+```
+
+```{r results = "hide"}
+#results hidden because generate_quantities prints cmdstan progress
+params <- c("cost", "turnover", "n0", "rFrac", "K", "rS", "dD", "sigma")
+
+#prior draws from a saved priors list. Fixed parameters take their fixed value and K is kept above n0 like in stan
+draw_prior <- function(priors, fixed_vals, n = 4000) {
+  tibble(
+    cost     = runif(n, priors$cost_prior[1], priors$cost_prior[2]),
+    turnover = runif(n, priors$turnover_prior[1], priors$turnover_prior[2]),
+    n0       = runif(n, priors$n0_prior[1], priors$n0_prior[2]),
+    rFrac    = runif(n, priors$rFrac_prior[1], priors$rFrac_prior[2]),
+    K        = rlnorm(n, priors$K_prior[1], priors$K_prior[2]),
+    rS       = rlnorm(n, priors$rS_prior[1], priors$rS_prior[2]),
+    dD       = rlnorm(n, priors$dD_prior[1], priors$dD_prior[2]),
+    sigma    = rlnorm(n, priors$sigma_prior[1], priors$sigma_prior[2])
+  ) |>
+    mutate(!!!fixed_vals) |>
+    filter(K > n0)
+}
+
+#posterior draws, AT score, diagnostics and settings for the saved fits in a step
+read_step <- function(step) {
+  step_dir <- here::here("fits/probing_cycle", step)
+  ids <- probing_ids[file.exists(make_fit_path(probing_ids, step_dir))] #missing means the fit failed
+  if (!length(ids)) return(NULL)
+  fits <- map(ids, \(id) readRDS(make_fit_path(id, step_dir)))
+
+  draws <- map2_dfr(fits, ids, \(fit, id) fit$draws(params, format = "draws_df") |> as_tibble() |>
+                      select(all_of(params)) |> mutate(patient = id)) |>
+    mutate(AT_score     = calc_delta_benefit(kappa = .2, dR = turnover * rS, K = K, rR = (1 - cost) * rS, R0 = rFrac * n0),
+           can_progress = progression_possible(cost, turnover, n0, K))
+
+  diagnostics <- map2_dfr(fits, ids, \(fit, id) tibble(
+    patient     = id,
+    divergences = sum(fit$diagnostic_summary(quiet = TRUE)$num_divergent),
+    max_rhat    = max(fit$summary(params, "rhat")$rhat, na.rm = TRUE))) #fixed parameters have no rhat
+
+  settings <- readRDS(sub("\\.rds$", "_settings.rds", make_fit_path(ids[1], step_dir)))
+
+  #predicted PSA over the full history from the first cycle posterior, next to all observed PSA
+  mod <- cmdstan_model(settings$stan_file)
+  trajectories <- map2_dfr(fits, ids, \(fit, id) {
+    full_data <- make_stan_data(id, first_cycle = FALSE, settings$priors, settings$fixed_vals)
+    patient_data <- load_bruchovsky_patient(id)
+    mod$generate_quantities(fit, data = full_data, seed = 1)$draws("PSA_pred") |>
+      summarise_draws(median, ~quantile2(.x, probs = c(.025, .25, .75, .975))) |>
+      mutate(patient    = id,
+             time       = full_data$output_times[full_data$obs_idx],
+             PSA        = full_data$PSA_norm,
+             cycle1_end = max(patient_data$Time[patient_data$CycleId == 1]))
+  })
+
+  list(draws = draws, diagnostics = diagnostics, trajectories = trajectories, settings = settings)
+}
+
+step_fits <- map(names(steps), read_step) |> set_names(names(steps))
+```
+
+```{r fig.width=10, fig.height=6}
+for (step in names(step_fits)) {
+  step_fit <- step_fits[[step]]
+  if (is.null(step_fit)) next
+  fixed_vals <- step_fit$settings$fixed_vals
+  free <- setdiff(params, names(fixed_vals))
+  fixed_text <- if (length(fixed_vals)) paste(names(fixed_vals), unlist(fixed_vals), sep = " = ", collapse = ", ") else "none"
+
+  #free parameters, prior in grey and one colour per patient
+  prior_long <- draw_prior(step_fit$settings$priors, fixed_vals) |>
+    select(all_of(free)) |>
+    pivot_longer(everything(), names_to = "parameter")
+  params_plot <- step_fit$draws |>
+    select(patient, all_of(free)) |>
+    pivot_longer(-patient, names_to = "parameter") |>
+    ggplot(aes(value)) +
+    geom_density(data = prior_long, fill = "grey70", colour = NA) +
+    geom_density(aes(fill = factor(patient)), alpha = .4, colour = NA) +
+    facet_wrap(~ parameter, scales = "free") +
+    theme_classic() +
+    labs(title = paste("Prior (grey) and posteriors, step", step), subtitle = paste("Fixed:", fixed_text), fill = "patient")
+  print(params_plot)
+
+  #AT score on draws where progression is possible, with the paper's value as a dashed line
+  at_plot <- step_fit$draws |>
+    filter(can_progress, between(AT_score, -4, 4)) |>
+    ggplot(aes(AT_score)) +
+    geom_density(fill = "#2a78d6", alpha = .5, colour = NA) +
+    geom_vline(data = paper_at_scores, aes(xintercept = AT_score), linetype = "dashed") +
+    facet_wrap(~ patient, scales = "free_y") +
+    coord_cartesian(xlim = c(-1, 4)) +
+    theme_classic() +
+    labs(title = paste("AT score, step", step), subtitle = paste("Fixed:", fixed_text))
+  print(at_plot)
+
+  #predicted PSA with 50% (dark) and 95% (light) intervals, observed PSA as points
+  #dashed line is the end of the fitted first cycle, after it the model is predicting
+  trajectory_plot <- step_fit$trajectories |>
+    ggplot(aes(time)) +
+    geom_ribbon(aes(ymin = q2.5, ymax = q97.5), fill = "#2a78d6", alpha = .2) +
+    geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#2a78d6", alpha = .4) +
+    geom_line(aes(y = median), colour = "#2a78d6") +
+    geom_point(aes(y = PSA)) +
+    geom_vline(data = distinct(step_fit$trajectories, patient, cycle1_end), aes(xintercept = cycle1_end), linetype = "dashed") +
+    facet_wrap(~ patient, scales = "free") +
+    theme_classic() +
+    labs(title = paste("Predicted and observed PSA, step", step), subtitle = paste("Fixed:", fixed_text),
+         y = "PSA (normalised to first measurement)")
+  print(trajectory_plot)
+}
+```
+
+### Across steps
+```{r fig.width=10, fig.height=5}
+#share of draws where progression is possible, next to the sampler diagnostics
+step_diagnostics <- map_dfr(step_fits, \(x) x$diagnostics |>
+                              left_join(x$draws |> group_by(patient) |> summarise(kept = mean(can_progress)), by = "patient"),
+                            .id = "step")
+knitr::kable(step_diagnostics, digits = 3)
+
+at_steps <- map_dfr(step_fits, \(x) x$draws |>
+                      filter(can_progress, is.finite(AT_score)) |>
+                      group_by(patient) |>
+                      median_qi(AT_score),
+                    .id = "step") |>
+  mutate(step = factor(step, rev(names(steps))))
+
+ggplot(at_steps, aes(AT_score, step, xmin = .lower, xmax = .upper)) +
+  geom_pointrange() +
+  geom_vline(data = paper_at_scores, aes(xintercept = AT_score), linetype = "dashed") +
+  facet_wrap(~ patient, scales = "free_x") +
+  theme_classic() +
+  labs(title = "AT score median and 95% interval per step", subtitle = "Dashed line is the paper's value", y = NULL)
+```
+
 ## Questions
-Follow up on comment on simulation. What parameters would we draw from. 
-
-
-Median AT score `r rnorm()`
-
-How to deal with the steady state
+How would we know that a digital twin is good enough that we would trust it for medical decisions. 
 
 ## Next
-Find out why they AT scores don't agree with paper.
+- check which kappa the paper's scores use. We use kappa = .2, but `calc_atx_benefit` in Mathematical_Biomarkers/utils/myUtils.py uses kappa = n_crit / K or ave_n / K
+- compare our posteriors for R0 = rFrac * n0 and dR with the paper's fitted values per patient
 
-Maybe move the model to 
 
 
 
