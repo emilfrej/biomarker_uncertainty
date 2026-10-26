@@ -12,7 +12,8 @@ pacman::p_load(tidybayes, bayesplot, posterior, cmdstanr)
 
 Update since last:
 
-## plot posteriors 
+## plot posteriors
+
 ```{r}
 #AT scores reported in the biomarker paper, drawn as a dashed line on the AT score plot
 paper_at_scores <- tibble(patient = c(12, 20, 25, 78, 85),
@@ -116,6 +117,7 @@ for (id in c(12, 20, 25, 78, 85)) {
 ```
 
 ## AT scores versus paper
+
 ```{r}
 at_table <- bind_rows(at_summaries) |>
   select(patient, fit = dist, AT_score, .lower, .upper) |>
@@ -128,6 +130,7 @@ knitr::kable(at_table, digits = 3)
 Median AT score is above the paper's value in `r sum(at_table$AT_score > at_table$AT_score_paper)` of `r nrow(at_table)` fits. The paper's value is inside our 95% interval in `r sum(at_table$paper_in_interval)` of them. The full history fits sit closer to the paper than the first cycle fits for most patients.
 
 ## Freeing parameters one at a time, probing cycle
+
 Step 0 is the probing cycle fit from biomarker_validation_r.Rmd: first cycle only, rS, rFrac, cost, dD and n0 fixed, turnover, K and sigma estimated. K has no upper bound and is bounded below by n0. Each step after that frees one more parameter and keeps the ones freed before it. The order goes from what the first cycle should identify most easily to least: n0 (first PSA measurement), dD (decline on treatment), rS (tight prior), cost and rFrac (resistance barely shows in the first cycle).
 
 ```{r}
@@ -169,8 +172,7 @@ draw_prior <- function(priors, fixed_vals, n = 4000) {
 }
 
 #posterior draws, AT score, diagnostics and settings for the saved fits in a step
-read_step <- function(step) {
-  step_dir <- here::here("fits/probing_cycle", step)
+read_step <- function(step, step_dir = here::here("fits/probing_cycle", step)) {
   ids <- probing_ids[file.exists(make_fit_path(probing_ids, step_dir))] #missing means the fit failed
   if (!length(ids)) return(NULL)
   fits <- map(ids, \(id) readRDS(make_fit_path(id, step_dir)))
@@ -259,6 +261,7 @@ for (step in names(step_fits)) {
 ```
 
 ### Across steps
+
 ```{r fig.width=10, fig.height=5}
 #share of draws where progression is possible, next to the sampler diagnostics
 step_diagnostics <- map_dfr(step_fits, \(x) x$diagnostics |>
@@ -281,15 +284,88 @@ ggplot(at_steps, aes(AT_score, step, xmin = .lower, xmax = .upper)) +
   labs(title = "AT score median and 95% interval per step", subtitle = "Dashed line is the paper's value", y = NULL)
 ```
 
+## Full history, all parameters free
+
+Same model, priors and sampler settings as step 5 (nothing fixed), but fitted to every cycle instead of only the first. The question is whether the later cycles identify what the first cycle could not (rS, K, rFrac, cost), and how that moves the AT score.
+
+```{r}
+fit_patients(probing_ids, stan_file = here::here("stan/model_switchable.stan"), priors = make_priors(),
+             fixed_vals = list(), first_cycle = FALSE,
+             out_dir = here::here("fits/full_history_free"),
+             chains = 4, parallel_chains = 4, seed = 1, refresh = 500, adapt_delta = .95)
+```
+
+```{r results = "hide"}
+#results hidden because generate_quantities prints cmdstan progress
+full_free  <- read_step("full_history_free", here::here("fits/full_history_free"))
+first_free <- step_fits[["5_free_rS"]]
+```
+
+```{r fig.width=14, fig.height=10}
+fit_colours <- c("prior" = "grey70", "first cycle" = "#2a78d6", "full history" = "#eb6834")
+
+#sampler diagnostics and share of draws where progression is possible, both fits
+bind_rows(`first cycle` = first_free$diagnostics, `full history` = full_free$diagnostics, .id = "fit") |>
+  left_join(bind_rows(`first cycle` = first_free$draws, `full history` = full_free$draws, .id = "fit") |>
+              group_by(fit, patient) |> summarise(kept = mean(can_progress), .groups = "drop"),
+            by = c("fit", "patient")) |>
+  arrange(patient, fit) |>
+  knitr::kable(digits = 3)
+
+#prior (drawn in every row) and the two posteriors, one row per patient
+free_draws <- bind_rows(`first cycle` = first_free$draws, `full history` = full_free$draws, .id = "fit") |>
+  select(fit, patient, all_of(params)) |>
+  pivot_longer(all_of(params), names_to = "parameter")
+prior_long <- draw_prior(full_free$settings$priors, list()) |>
+  pivot_longer(everything(), names_to = "parameter")
+
+ggplot(free_draws, aes(value)) +
+  geom_density(data = prior_long, aes(fill = "prior"), colour = NA) +
+  geom_density(aes(fill = fit), alpha = .5, colour = NA) +
+  facet_wrap(patient ~ parameter, ncol = length(params), scales = "free") + #free per panel, the tight rS prior flattens a shared y axis
+  scale_fill_manual(values = fit_colours) +
+  theme_classic() +
+  labs(title = "Prior and posteriors, all parameters free", fill = NULL)
+```
+
+```{r fig.width=10, fig.height=4}
+#AT score on draws where progression is possible, with the paper's value as a dashed line
+bind_rows(`first cycle` = first_free$draws, `full history` = full_free$draws, .id = "fit") |>
+  filter(can_progress, is.finite(AT_score)) |>
+  group_by(fit, patient) |>
+  median_qi(AT_score) |>
+  ggplot(aes(AT_score, fit, xmin = .lower, xmax = .upper, colour = fit)) +
+  geom_pointrange() +
+  geom_vline(data = paper_at_scores, aes(xintercept = AT_score), linetype = "dashed") +
+  facet_wrap(~ patient, scales = "free_x", nrow = 1) +
+  scale_colour_manual(values = fit_colours, guide = "none") +
+  theme_classic() +
+  labs(title = "AT score median and 95% interval, all parameters free", subtitle = "Dashed line is the paper's value", y = NULL)
+```
+
+```{r fig.width=10, fig.height=6}
+#predicted PSA with 95% intervals from both fits, observed PSA as points
+#dashed line is the end of the first cycle, after it the first cycle fit is predicting
+bind_rows(`first cycle` = first_free$trajectories, `full history` = full_free$trajectories, .id = "fit") |>
+  ggplot(aes(time)) +
+  geom_ribbon(aes(ymin = q2.5, ymax = q97.5, fill = fit), alpha = .25) +
+  geom_line(aes(y = median, colour = fit)) +
+  geom_point(aes(y = PSA), data = full_free$trajectories, size = .8) +
+  geom_vline(data = distinct(full_free$trajectories, patient, cycle1_end), aes(xintercept = cycle1_end), linetype = "dashed") +
+  facet_wrap(~ patient, scales = "free") +
+  scale_fill_manual(values = fit_colours) +
+  scale_colour_manual(values = fit_colours) +
+  theme_classic() +
+  labs(title = "Predicted and observed PSA, all parameters free", fill = NULL, colour = NULL,
+       y = "PSA (normalised to first measurement)")
+```
+
 ## Questions
-How would we know that a digital twin is good enough that we would trust it for medical decisions. 
+
+Negative AT again. Claude says that sometimes resistant will never double if there they cost and turnover are big enough and equation blows up somehow.
+
+I think we will need to place some priors somewhere. Maybe it can be estimated from the data.
+
+How would we know that a digital twin is good enough that we would trust it for medical decisions.
 
 ## Next
-- check which kappa the paper's scores use. We use kappa = .2, but `calc_atx_benefit` in Mathematical_Biomarkers/utils/myUtils.py uses kappa = n_crit / K or ave_n / K
-- compare our posteriors for R0 = rFrac * n0 and dR with the paper's fitted values per patient
-
-
-
-
-
-
