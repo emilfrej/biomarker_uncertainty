@@ -34,4 +34,18 @@ Bounds. We place a bound on K≥N0. If not, the carrying capacity of the system 
 
 ODE implementation and data wrangling The Lotka Volterra model is fitted as ODE where the ODE is solved in treatment segments. This means that a starting cell population is inferred and the ODE uses this to solve the cell population up to and including the day when the treatment changes. This is the used as the starting point for the next ODE segment that is solved until up to and including when the treatment switches back. The data at times contains observations where the treatment is switched despite some of the rows on which a switch in treatment is reported don't contain PSA measurements. This is different to biomarker paper that drops all NON psa observations. Per stan user guide.
 
-#### 
+### simulation details:
+
+The progression in the real word is the change of one random variable to the next, while the simulation uses the underlying tumor volume to test when progression happens. Realistically, the simulation should also consider consider progression difference in PSA values rather than
+
+#### Implementation points
+
+How to deal with patients that did progress vs didn't progress on trial. Probably not a problem in
+
+How to deal with non-PSA progression. See survival model paper by desmee
+
+Model issues:
+
+spurios steady state suggesting that patients would never progress
+
+Negative AT values when

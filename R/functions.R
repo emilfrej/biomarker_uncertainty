@@ -332,6 +332,8 @@ make_stan_data <- function(patient_id, first_cycle = FALSE, priors, fixed_vals =
       PSA_norm               = obs_df$PSA
       ),
     make_fixed_val_data(fixed_vals),
+    fit_psa0   = 0,              #PSA is already normalised in load_bruchovsky_patient
+    list(psa0_prior = c(0, 1)),  #unused when fit_psa0 is 0. In a list so c() keeps it as one vector
     prior_only = prior_only,
     priors,
     run_diagnostics = run_diagnostics)

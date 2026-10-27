@@ -1,0 +1,245 @@
+---
+title: "Meeting notes v2: synthetic patients"
+output: html_document
+---
+
+```{r warning=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+#packages and custom functions
+source(here::here("R/functions.R"))
+source(here::here("R/synth_functions.R"))
+pacman::p_load(tidybayes, posterior, cmdstanr)
+```
+
+Update since last:
+
+The synthetic patients come from `python/genertate_synth_AT_trial_data.ipynb`. Parameters are drawn from `priorDic`, and only draws that progress on continuous therapy (eq. 8) and progress within 5000 days under adaptive therapy are kept. Each patient has a check-up every 28 days, and the Zhang rule decides the dose from a noisy observation of the tumour size (normal noise with sd `sigma`).
+
+Every patient is fitted with `model_switchable.stan`, all parameters free, on three windows: the first cycle, the first two cycles and the full history. A cycle is a treatment period and the holiday after it. Priors are uniform for cost, turnover, n0 and rFrac (as in `make_priors()`), and lognormal for K, rS and sigma with the values from `priorDic`. dD keeps its lognormal(log(1.5), 0.5) prior, while the true values are uniform on [0.5, 2].
+
+## Fitting
+
+The fits are made by `R/fit_synth.R`, which runs the code below for every patient and skips fits that are already saved. It is not run when knitting. Every fit is stopped after 2 minutes. Some full history fits in the first pilot ran for up to 15 hours, most likely because the sampler wanders into parameter regions where the ODE is stiff. Windows with fewer than 5 observations are not fitted.
+
+```{r eval=FALSE}
+for (window in names(synth_windows)) {
+  fit_synth_patients(list_synth_patients(), n_cycles = synth_windows[[window]],
+                     out_dir = here::here("fits", paste0("synth_", window)), time_limit = 120,
+                     chains = 4, parallel_chains = 4, seed = 1, refresh = 0, adapt_delta = .95)
+}
+```
+
+```{r}
+#draws and diagnostics for every saved fit, one list element per window
+windows <- names(synth_windows)
+window_labels <- c(first_cycle = "first cycle", two_cycles = "two cycles", full_history = "full history")
+fits <- map(windows, read_synth_window) |> set_names(windows)
+
+#true parameters, and how many cycles each patient has. Patients with one cycle have the same data in every window
+truth <- load_synth_truth() |>
+  mutate(cycles = map_dbl(patient, \(id) max(load_synth_patient(id)$CycleId)))
+fitted_ids <- unique(unlist(map(fits, \(x) x$diagnostics$patient)))
+```
+
+`r length(fitted_ids)` of `r nrow(truth)` patients have at least one saved fit. Per window:
+
+```{r}
+#patients per window that have too few observations, were stopped by the time limit, or have a saved fit
+map_dfr(windows, \(w) tibble(
+  window           = window_labels[w],
+  patients         = nrow(truth),
+  too_few_obs      = sum(map_int(truth$patient, \(id) count_synth_obs(id, synth_windows[[w]])) < 5),
+  stopped_at_2_min = nrow(fits[[w]]$timeouts %||% tibble()),
+  fitted           = nrow(fits[[w]]$diagnostics %||% tibble()))) |>
+  knitr::kable()
+```
+
+Patients stopped by the time limit are left out of everything below. If they are the harder patients, the results below look better than they would with every patient included.
+
+## Diagnostics
+
+A fit counts as good when it has no divergent transitions, max Rhat below 1.01 and a bulk ESS above 400 for every parameter.
+
+```{r}
+diagnostics <- map_dfr(fits, "diagnostics", .id = "window") |>
+  mutate(window = factor(window_labels[window], window_labels),
+         good   = divergences == 0 & max_rhat < 1.01 & min_ess_bulk > 400)
+
+diagnostics |>
+  group_by(window) |>
+  summarise(fits            = n(),
+            good            = sum(good),
+            with_divergences = sum(divergences > 0),
+            rhat_above_1.01 = sum(max_rhat >= 1.01),
+            ess_below_400   = sum(min_ess_bulk <= 400),
+            ebfmi_below_0.3 = sum(min_ebfmi < .3),
+            median_seconds  = median(seconds),
+            max_seconds     = max(seconds)) |>
+  knitr::kable(digits = 1)
+```
+
+```{r fig.width=10, fig.height=4}
+#max Rhat per fit, coloured by whether the fit had divergent transitions
+diagnostics |>
+  ggplot(aes(window, max_rhat, colour = divergences > 0)) +
+  geom_jitter(width = .2, height = 0, alpha = .6) +
+  geom_hline(yintercept = 1.01, linetype = "dashed") +
+  scale_y_log10() +
+  scale_colour_manual(values = c(`FALSE` = "grey40", `TRUE` = "#eb6834")) +
+  theme_classic() +
+  labs(title = "Max Rhat per fit", subtitle = "Dashed line is 1.01", x = NULL, colour = "divergences")
+```
+
+Fits that are not good:
+
+```{r}
+diagnostics |>
+  filter(!good) |>
+  left_join(select(truth, patient, cycles), by = "patient") |>
+  select(window, patient, cycles, n_obs, divergences, max_rhat, min_ess_bulk, min_ebfmi) |>
+  arrange(window, patient) |>
+  knitr::kable(digits = 3)
+```
+
+## Parameter recovery
+
+Posterior median and 90% interval against the true value, one plot per window. Points on the dashed line are recovered exactly.
+
+```{r}
+#posterior median and 90% interval per patient, parameter and window, next to the true value
+recovery <- map_dfr(fits, "draws", .id = "window") |>
+  pivot_longer(all_of(synth_params), names_to = "parameter") |>
+  group_by(window, patient, parameter) |>
+  median_qi(value, .width = .9) |>
+  ungroup() |>
+  left_join(truth |> select(patient, cycles, all_of(synth_params)) |>
+              pivot_longer(all_of(synth_params), names_to = "parameter", values_to = "true"),
+            by = c("patient", "parameter")) |>
+  left_join(select(diagnostics, window, patient, good) |> mutate(window = windows[as.integer(window)]),
+            by = c("window", "patient")) |>
+  mutate(window  = factor(window_labels[window], window_labels),
+         covered = between(true, .lower, .upper))
+```
+
+```{r fig.width=10, fig.height=8, results="asis"}
+for (w in window_labels) {
+  window_recovery <- filter(recovery, window == w)
+  if (!nrow(window_recovery)) next #no saved fits for this window yet
+  p <- window_recovery |>
+    ggplot(aes(true, value, ymin = .lower, ymax = .upper, colour = good)) +
+    geom_abline(linetype = "dashed") +
+    geom_pointrange(size = .15, alpha = .6) +
+    facet_wrap(~ parameter, scales = "free") +
+    scale_colour_manual(values = c(`TRUE` = "#2a78d6", `FALSE` = "#eb6834")) +
+    theme_classic() +
+    labs(title = paste("Parameter recovery,", w), x = "true value", y = "posterior median and 90% interval",
+         colour = "good fit")
+  print(p)
+}
+```
+
+Share of patients whose 90% interval contains the true value. With well calibrated priors this would be close to 0.9. It is only expected to be approximate here, since the priors for cost, turnover, n0, rFrac and dD are not the distributions the true values were drawn from.
+
+```{r}
+recovery |>
+  group_by(parameter, window) |>
+  summarise(coverage = mean(covered), .groups = "drop") |>
+  pivot_wider(names_from = window, values_from = coverage) |>
+  knitr::kable(digits = 2)
+```
+
+How much each posterior narrows compared with its prior, as 1 - posterior variance / prior variance. 0 means the data taught us nothing, 1 means the parameter is pinned down.
+
+```{r fig.width=10, fig.height=5}
+#prior variance from the priors used in the fits. Uniform (a, b) has variance (b - a)^2 / 12
+priors <- make_synth_priors()
+lognormal_var <- function(p) (exp(p[2]^2) - 1) * exp(2 * p[1] + p[2]^2)
+prior_var <- c(cost     = diff(priors$cost_prior)^2 / 12,
+               turnover = diff(priors$turnover_prior)^2 / 12,
+               n0       = diff(priors$n0_prior)^2 / 12,
+               rFrac    = diff(priors$rFrac_prior)^2 / 12,
+               K        = lognormal_var(priors$K_prior),
+               rS       = lognormal_var(priors$rS_prior),
+               dD       = lognormal_var(priors$dD_prior),
+               sigma    = lognormal_var(priors$sigma_prior))
+
+contraction <- map_dfr(fits, "draws", .id = "window") |>
+  pivot_longer(all_of(synth_params), names_to = "parameter") |>
+  group_by(window, patient, parameter) |>
+  summarise(contraction = 1 - var(value) / prior_var[first(parameter)], .groups = "drop") |>
+  mutate(window = factor(window_labels[window], window_labels))
+
+ggplot(contraction, aes(window, contraction)) +
+  geom_boxplot(outlier.size = .5) +
+  facet_wrap(~ parameter, nrow = 2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(title = "Posterior contraction per window", x = NULL)
+```
+
+## Delta AT
+
+Delta AT (`calc_delta_benefit`, kappa = 0.2) for every posterior draw, keeping only draws where progression is possible (eq. 8), like in the v1 notes. The true value is computed from the true parameters. `r sum(!is.finite(truth$AT_score))` patients have a non-finite true Delta AT and are left out.
+
+```{r}
+#median and 90% interval of Delta AT per patient and window, next to the true value
+at_scores <- map_dfr(fits, "draws", .id = "window") |>
+  mutate(AT_score     = calc_delta_benefit(kappa = .2, dR = turnover * rS, K = K, rR = (1 - cost) * rS, R0 = rFrac * n0),
+         can_progress = progression_possible(cost, turnover, n0, K)) |>
+  filter(can_progress, is.finite(AT_score)) |>
+  group_by(window, patient) |>
+  summarise(kept      = n() / 4000, #4 chains of 1000 draws
+            AT_median = median(AT_score),
+            AT_lower  = quantile(AT_score, .05),
+            AT_upper  = quantile(AT_score, .95),
+            .groups = "drop") |>
+  left_join(select(truth, patient, cycles, AT_true = AT_score), by = "patient") |>
+  filter(is.finite(AT_true)) |>
+  mutate(window  = factor(window_labels[window], window_labels),
+         covered = between(AT_true, AT_lower, AT_upper),
+         error   = AT_median - AT_true)
+```
+
+```{r fig.width=10, fig.height=4}
+ggplot(at_scores, aes(AT_true, AT_median, ymin = AT_lower, ymax = AT_upper)) +
+  geom_abline(linetype = "dashed") +
+  geom_pointrange(size = .15, alpha = .6, colour = "#2a78d6") +
+  facet_wrap(~ window) +
+  theme_classic() +
+  labs(title = "Delta AT recovery", x = "true Delta AT", y = "posterior median and 90% interval")
+```
+
+Coverage, error and interval width per window, for all patients and for the patients with at least three cycles (where the three windows actually contain different data).
+
+```{r}
+summarise_at <- function(df) {
+  df |>
+    group_by(window) |>
+    summarise(patients          = n(),
+              coverage          = mean(covered, na.rm = TRUE),
+              median_abs_error  = median(abs(error), na.rm = TRUE),
+              median_width      = median(AT_upper - AT_lower, na.rm = TRUE),
+              median_kept_draws = median(kept),
+              .groups = "drop")
+}
+
+bind_rows(`all patients` = summarise_at(at_scores),
+          `3+ cycles`    = summarise_at(filter(at_scores, cycles >= 3)),
+          .id = "patients_in") |>
+  knitr::kable(digits = 3)
+```
+
+```{r fig.width=8, fig.height=4}
+#how the error changes when more cycles are fitted, for patients where the windows differ
+at_scores |>
+  filter(cycles >= 3) |>
+  ggplot(aes(window, abs(error))) +
+  geom_boxplot(outlier.size = .5) +
+  scale_y_log10() +
+  theme_classic() +
+  labs(title = "Absolute Delta AT error per window, patients with 3+ cycles", x = NULL, y = "|median - true|")
+```
+
+## Questions
+
+## Next
