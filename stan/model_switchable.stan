@@ -35,10 +35,10 @@ data {
   array[n_obs] int<lower=1, upper=n_out> obs_idx; //which ode state each PSA reading is compared with
 
   //params for priors
-  vector[2] cost_prior; // uniform lower and upper bound
-  vector[2] turnover_prior; // uniform lower and upper bound
-  vector[2] n0_prior; // uniform lower and upper bound
-  vector[2] rFrac_prior; // uniform lower and upper bound
+  vector[2] cost_prior; // beta shape parameters
+  vector[2] turnover_prior; // beta shape parameters
+  vector[2] n0_prior; // beta shape parameters
+  vector[2] rFrac_prior; // beta shape parameters
   vector[2] sigma_prior; 
   vector[2] K_prior; // lognormal location and scale
   vector[2] rS_prior; 
@@ -162,10 +162,10 @@ transformed parameters{
 
 model {
   //set priors for parameters that are being fitted
-  if (fit_cost) cost_free ~ uniform(cost_prior[1], cost_prior[2]);
-  if (fit_turnover) turnover_free ~ uniform(turnover_prior[1], turnover_prior[2]);
-  if (fit_n0) n0_free ~ uniform(n0_prior[1], n0_prior[2]);
-  if (fit_rFrac) rFrac_free ~ uniform(rFrac_prior[1], rFrac_prior[2]);
+  if (fit_cost) cost_free ~ beta(cost_prior[1], cost_prior[2]);
+  if (fit_turnover) turnover_free ~ beta(turnover_prior[1], turnover_prior[2]);
+  if (fit_n0) n0_free ~ beta(n0_prior[1], n0_prior[2]);
+  if (fit_rFrac) rFrac_free ~ beta(rFrac_prior[1], rFrac_prior[2]);
   if (fit_K) K_free ~ lognormal(K_prior[1], K_prior[2]);
   if (fit_rS) rS_free ~ lognormal(rS_prior[1], rS_prior[2]);
   if (fit_dD) dD_free ~ lognormal(dD_prior[1], dD_prior[2]);
@@ -173,30 +173,30 @@ model {
 
   sigma ~ lognormal(sigma_prior[1], sigma_prior[2]);
   
-  //likelihood if prior only is not passed
-  if (!prior_only) PSA_norm ~ normal(mu, sigma);
+  //likelihood if prior only is not passed. Noise is proportional to the tumour size, as in LotkaVolterraModel.EmitObservation
+  if (!prior_only) PSA_norm ~ normal(mu, sigma * mu);
 
 }
 
 generated quantities{
   //posterior predictive PSA: a new measurement at each observation time
-  array[n_obs] real PSA_pred = normal_rng(mu, sigma);
+  array[n_obs] real PSA_pred = normal_rng(mu, sigma * mu);
   real lprior;
   vector[n_obs] log_lik;
   //if flag is on, get log liklihood and prior estimate of making draw
   if (run_diagnostics == 1){
     lprior = lognormal_lpdf(sigma|sigma_prior[1], sigma_prior[2]);
-    if (fit_cost) lprior += uniform_lpdf(cost|cost_prior[1], cost_prior[2]);
-    if (fit_turnover) lprior += uniform_lpdf(turnover|turnover_prior[1], turnover_prior[2]);
-    if (fit_n0) lprior += uniform_lpdf(n0|n0_prior[1], n0_prior[2]);
-    if (fit_rFrac) lprior += uniform_lpdf(rFrac|rFrac_prior[1], rFrac_prior[2]);
+    if (fit_cost) lprior += beta_lpdf(cost|cost_prior[1], cost_prior[2]);
+    if (fit_turnover) lprior += beta_lpdf(turnover|turnover_prior[1], turnover_prior[2]);
+    if (fit_n0) lprior += beta_lpdf(n0|n0_prior[1], n0_prior[2]);
+    if (fit_rFrac) lprior += beta_lpdf(rFrac|rFrac_prior[1], rFrac_prior[2]);
     if (fit_K) lprior += lognormal_lpdf(K | K_prior[1], K_prior[2]);
     if (fit_rS) lprior += lognormal_lpdf(rS | rS_prior[1], rS_prior[2]);
     if (fit_dD) lprior += lognormal_lpdf(dD | dD_prior[1], dD_prior[2]);
     if (fit_psa0) lprior += lognormal_lpdf(psa0 | psa0_prior[1], psa0_prior[2]);
     // for each observation compute the log likelihood of making that observation, used for model comp and sens analysis
     for (i in 1:n_obs){
-      log_lik[i] = normal_lpdf(PSA_norm[i]| mu[i], sigma);
+      log_lik[i] = normal_lpdf(PSA_norm[i]| mu[i], sigma * mu[i]);
     }
   }
 }

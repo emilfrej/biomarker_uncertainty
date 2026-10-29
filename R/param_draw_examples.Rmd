@@ -1,0 +1,115 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-10-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(cmdstanr, bayesplot)
+source(here::here("R/functions.R"))
+source(here::here("R/synth_functions.R"))
+```
+
+## Load a fit
+
+```{r}
+patient <- 0
+window  <- "first_cycle" # first_cycle, two_cycles or full_history
+fit <- readRDS(here::here(sprintf("fits/synth_switchable/%s/fit_patient%03d.rds", window, patient)))
+params <- c("cost", "turnover", "n0", "rFrac", "rS", "dD", "sigma")
+```
+
+## Parameter recovery
+
+Made by `R/plot_synth_switchable.R`.
+
+```{r, out.width = "100%"}
+knitr::include_graphics(here::here(sprintf("fits/synth_switchable/results/recovery_%s.png", params)))
+```
+
+## Observations and true trajectory
+
+```{r}
+#all observations, flagged by whether they were in the fitted window
+obs <- load_synth_patient(patient) |>
+  filter(!is.na(PSA)) |>
+  mutate(fitted  = CycleId <= synth_windows[[window]],
+         PSA_rel = PSA / first(PSA)) #relative to the first observation
+#noise-free ODE solution the observations were simulated from
+trajectory <- read_csv(here::here(sprintf("synth_data/patient_%d_ODEdf.csv", patient)),
+                       show_col_types = FALSE, name_repair = "unique_quiet") |>
+  select(Time, DrugConcentration, S, R, TumourSize)
+initial_size <- trajectory$TumourSize[1]
+
+trajectory |>
+  pivot_longer(c(S, R, TumourSize), names_to = "population") |>
+  ggplot(aes(Time, value / initial_size)) +
+  geom_line(aes(colour = population)) +
+  geom_point(data = obs, aes(Time, PSA_rel, shape = fitted)) +
+  scale_shape_manual(values = c(`TRUE` = 16, `FALSE` = 1)) +
+  labs(y = "Tumour size relative to initial", shape = "In fitted window")
+```
+
+## Predicted trajectory: first cycle vs two cycles
+
+Posterior draws from each fit are run through Kit Gallagher's python simulator on the patient's actual treatment schedule.
+
+```{r, fig.width = 12, fig.height = 4.5}
+pacman::p_load(reticulate)
+use_virtualenv("/Users/80002536/Documents/moffitt/at-modelling/.venv", required = TRUE)
+source_python(here::here("python/forward_sim.py"))
+
+schedule <- build_treatment_schedule(trajectory)
+n_draws  <- 200
+
+#same parameterisation as stan/model_switchable.stan
+simulate_draw <- function(cost, turnover, n0, rFrac, rS, dD, K, ...) {
+  run_forward_sim(list(rS = rS, rR = (1 - cost) * rS, dS = turnover * rS, dR = turnover * rS, dD = dD, K = K,
+                       S0 = (1 - rFrac) * n0, R0 = rFrac * n0, DMax = 1), schedule, dt = 1) |>
+    select(Time, TumourSize) |>
+    mutate(TumourSize = TumourSize / first(TumourSize)) #relative to this draw's initial size
+}
+
+set.seed(1)
+predictions <- map_dfr(c("first_cycle", "two_cycles"), \(w) {
+  draws <- readRDS(here::here(sprintf("fits/synth_switchable/%s/fit_patient%03d.rds", w, patient)))$draws(
+    c(params, "K"), format = "draws_df") |>
+    as_tibble() |>
+    slice_sample(n = n_draws)
+  draws |>
+    mutate(sim = pmap(draws, simulate_draw)) |>
+    select(sim) |>
+    unnest(sim) |>
+    group_by(Time) |>
+    summarise(median = median(TumourSize), lower = quantile(TumourSize, .1), upper = quantile(TumourSize, .9)) |>
+    mutate(window = w)
+})
+
+
+```
+
+```{r}
+#observations flagged by whether each fit saw them
+obs_by_window <- map_dfr(c("first_cycle", "two_cycles"), \(w) mutate(obs, window = w, fitted = CycleId <= synth_windows[[w]]))
+#predictions start after the last observation each fit saw
+prediction_start <- obs_by_window |> filter(fitted) |> group_by(window) |> summarise(Time = max(Time))
+
+ggplot(predictions, aes(Time)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = .3) +
+  geom_line(aes(y = median),  linetype = "dashed") +
+  geom_line(data = trajectory, aes(y = TumourSize / initial_size)) +
+  geom_vline(data = prediction_start, aes(xintercept = Time), linetype = "dotted") +
+  geom_hline(aes(yintercept = 1.2), linetype = "dotted") +
+  #geom_point(data = obs_by_window, aes(y = PSA_rel, shape = fitted)) +
+  scale_shape_manual(values = c(`TRUE` = 16, `FALSE` = 1)) +
+  facet_wrap(~ window) +
+  labs(y = "Tumour burden relative to initial")
+```
+
+## Pairs plot
+
+```{r, fig.width = 12, fig.height = 12}
+#np marks divergent transitions in red
+mcmc_pairs(fit$draws(params), np = nuts_params(fit))
+```
