@@ -38,6 +38,10 @@ ODE implementation and data wrangling The Lotka Volterra model is fitted as ODE 
 
 The progression in the real word is the change of one random variable to the next, while the simulation uses the underlying tumor volume to test when progression happens. Realistically, the simulation should also consider consider progression difference in PSA values rather than underlying tumor burden.
 
+### Dividing by first PSA measurement
+
+Since the model doesn't inform how much PSA is produced by a certain number of cells, the model can only estimate how the relative distance from carrying capacity by observing growth rates. To remove the scale how much PSA to how tumor from the system, we divide by the first measurement. N0, sets the level but should always more or less equal the first obs. So its rather that
+
 #### Unsolved:
 
 How to deal with patients that did progress vs didn't progress on trial. Probably not a problem in

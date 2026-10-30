@@ -69,12 +69,6 @@ data {
   //1 for log like and joint prior evalutation
   int<lower=0, upper=1> run_diagnostics;
 
-  //1 to normalise in Stan: the data is on its raw scale and the model is scaled to it by a fitted baseline level, mu * psa0 / n0
-  //0 to compare the model with the data directly (data already normalised)
-  int<lower=0, upper=1> fit_psa0;
-  vector[2] psa0_prior; // lognormal location and scale
-
-
 }
 
 parameters {
@@ -87,7 +81,6 @@ parameters {
   //K is bounded below by n0 (fitted or fixed), so the tumour always starts below carrying capacity
   array[fit_K] real<lower=(fit_n0 ? n0_free[1] : n0_fixed_val)> K_free;
   array[fit_dD] real<lower=0> dD_free;
-  array[fit_psa0] real<lower=0> psa0_free;
 
   real<lower=0> sigma;
 }
@@ -102,7 +95,6 @@ transformed parameters{
   real K = fit_K ? K_free[1] : K_fixed_val;
   real dD = fit_dD ? dD_free[1] : dD_fixed_val;
   //baseline level on the data scale. When not fitted it equals n0, so the model is compared with the data unscaled
-  real psa0 = fit_psa0 ? psa0_free[1] : n0;
 
 
   real rR = (1 - cost) * rS;
@@ -153,10 +145,9 @@ transformed parameters{
   array[n_obs] vector[2] likelihood_states = ode_states[obs_idx];
   
   //some times ODE returns very small but neg values. force these to zero. Claude sugggested reparametrizing to working in log(cells) instead
-  //mu is on the data scale: tumour size relative to n0, times the baseline level psa0
   vector[n_obs] mu;
   for (i in 1:n_obs){
-    mu[i] = psa0 / n0 * (fmax(likelihood_states[i][1], 0) + fmax(likelihood_states[i][2], 0));
+    mu[i] = (fmax(likelihood_states[i][1], 0) + fmax(likelihood_states[i][2], 0));
   }
 }
 
@@ -169,18 +160,17 @@ model {
   if (fit_K) K_free ~ lognormal(K_prior[1], K_prior[2]);
   if (fit_rS) rS_free ~ lognormal(rS_prior[1], rS_prior[2]);
   if (fit_dD) dD_free ~ lognormal(dD_prior[1], dD_prior[2]);
-  if (fit_psa0) psa0_free ~ lognormal(psa0_prior[1], psa0_prior[2]);
 
   sigma ~ lognormal(sigma_prior[1], sigma_prior[2]);
   
   //likelihood if prior only is not passed. Noise is proportional to the tumour size, as in LotkaVolterraModel.EmitObservation
-  if (!prior_only) PSA_norm ~ normal(mu, sigma * mu);
+  if (!prior_only) PSA_norm ~ normal(mu, sigma);
 
 }
 
 generated quantities{
   //posterior predictive PSA: a new measurement at each observation time
-  array[n_obs] real PSA_pred = normal_rng(mu, sigma * mu);
+  array[n_obs] real PSA_pred = normal_rng(mu, sigma);
   real lprior;
   vector[n_obs] log_lik;
   //if flag is on, get log liklihood and prior estimate of making draw
@@ -193,10 +183,9 @@ generated quantities{
     if (fit_K) lprior += lognormal_lpdf(K | K_prior[1], K_prior[2]);
     if (fit_rS) lprior += lognormal_lpdf(rS | rS_prior[1], rS_prior[2]);
     if (fit_dD) lprior += lognormal_lpdf(dD | dD_prior[1], dD_prior[2]);
-    if (fit_psa0) lprior += lognormal_lpdf(psa0 | psa0_prior[1], psa0_prior[2]);
     // for each observation compute the log likelihood of making that observation, used for model comp and sens analysis
     for (i in 1:n_obs){
-      log_lik[i] = normal_lpdf(PSA_norm[i]| mu[i], sigma * mu[i]);
+      log_lik[i] = normal_lpdf(PSA_norm[i]| mu[i], sigma);
     }
   }
 }
