@@ -8,6 +8,20 @@ DATA:
 
 Zhang: Patients were monitored 4-6 weeks. Pt on abiraterone until PSA \< 50% of t1, and then holiday until til PSA returned ≥100% of t1. Either surgical or chemical to maintain castration levels of testosterone. Were taken of trial for radio graphic progression or ECOG deterioration while on treatment [@zhang2022].
 
+### Assumptions in earlier work
+
+Many parameters were fixed.
+
+That noise would be Gaussian when the data is normalized.
+
+```{r}
+t <- seq(1, 100, with 0.1)
+
+sigma = 1
+
+rnorm(t, sigma)
+```
+
 ### Model fitting implementation
 
 The ODE models two populations of cancer cells: treatment-sensitive cells (S) and treatment-resistant cells (R). The model has been used to study how scheduling treatment breaks could delay the emergence of resistance in prostate cancer.
@@ -16,19 +30,17 @@ $$
 \frac{dS}{dt} = r_SS\cdot(1-\frac{S+R}{K}) \cdot (1-d_D D) - dS \\\frac{dR}{dt} = r_RR\cdot(1-\frac{S+R}{K}) - dR
 $$
 
-where $r_S, r_R$ are proliferation rates, $d$ is the cell death rate, $K$ is the carrying capacity, $D$ is the amount of drug applied, and $d_D$ is the drug-induced cell death rate. We assume that the normalized value of the biomarker prostate-specific antigen, $PSA_t$, is normally distributed around the total cell population:
+where $r_S, r_R$ are proliferation rates, $d$ is the cell death rate, $K$ is the carrying capacity, fixed to 1, $D$ is the amount of drug applied, and $d_D$ is the drug-induced cell death rate. We assume that the normalized value of the biomarker prostate-specific antigen, $NormPSA_t = \frac{PSA_t}{PSA_0$, is normally distributed around the cell density $\frac{N_t}{N_0}$ where $N_t=S_t+R_t$:
 
 $$
-PSA_t \sim Normal(S_t+R_t, \sigma) 
+NormPSA_t\sim Normal(\frac{N_t}{N_0}, \sigma) 
 $$
 
 Progression is typically defined as the total cell population exceeding 1.2 times its initial size, that is, when $S+R > 1.2(S_0+R_0)$. However, the ODE can settle into a steady state where the tumor is fully resistant but the total cell population is less than 1.2 times its initial size. We find that we only observe progression under continuous treatment when
 
 $$
-1.2(S_0+R_0) < K(1 - \frac{d}{r_R})
+1.2(N_0) < K(1 - \frac{d}{r_R})
 $$
-
-Bounds. We place a bound on K≥N0. If not, the carrying capacity of the system could be smaller than the initial tumor volume.
 
 #### ODE is solved Treatment segments
 

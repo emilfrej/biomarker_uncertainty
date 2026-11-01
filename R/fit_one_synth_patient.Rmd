@@ -1,0 +1,65 @@
+---
+title: "Fit one synthetic patient"
+output: html_document
+---
+
+```{r setup, message = FALSE}
+pacman::p_load(tidyverse, cmdstanr, here)
+source(here("R/functions.R"))
+source(here("R/synth_functions.R"))
+```
+
+```{r data}
+patient_id   <- 8
+patient_data <- load_synth_patient(patient_id)
+patient_data
+
+ggplot(patient_data, aes(x=Time, y = TumourSize/first(TumourSize))) +
+  geom_point()
+
+truth <- read_csv(here("synth_data/randSynthetic100Patients.csv"), show_col_types = FALSE, name_repair = "unique_quiet") |>
+  filter(PatientId == patient_id)
+truth
+
+
+  
+```
+
+```{r fit}
+set.seed(3)
+n_cycles <- Inf #Inf for the full history
+
+#priorDic from the notebook. K is fixed at 1, so K_prior is not used
+priors <- list(
+  cost_prior     = c(1, 1),
+  turnover_prior = c(1.2, 2.5),
+  n0_prior       = c(2, 2),
+  rFrac_prior    = c(1, 20),
+  K_prior        = c(log(2), 0.8),
+  rS_prior       = c(log(0.012), 0.6),
+  dD_prior       = c(log(2.5), 0.6),
+  sigma_prior    = c(log(0.2), 1))
+
+fixed_vals <- list(K = 1)
+
+stan_model <- cmdstan_model(here("stan/model_switchable.stan"))
+stan_data  <- make_switchable_stan_data(patient_id, n_cycles, priors, fixed_vals)
+pf <- stan_model$pathfinder(data = stan_data)
+fit <- stan_model$sample(data = stan_data, chains = 4, parallel_chains = 4, init = pf, adapt_delta = .95)
+fit$summary(c("cost", "turnover", "n0", "rFrac", "rS", "dD", "sigma"))
+
+fit$diagnostic_summary()
+
+
+
+```
+
+```{r}
+unconstrained <- list(cost = qlogis, turnover = qlogis, n0 = qlogis, rFrac = qlogis,
+                      rS = "log", dD = "log", sigma = "log")
+
+mcmc_pairs(fit$draws(pars), np = nuts_params(fit), transformations = unconstrained,  off_diag_fun = "hex")
+
+
+```
+

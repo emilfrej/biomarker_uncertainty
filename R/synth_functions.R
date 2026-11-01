@@ -25,31 +25,53 @@ load_synth_truth <- function(dir = here::here("synth_data")){
   truth_file <- list.files(dir, pattern = "^randSynthetic\\d+Patients\\.csv$", full.names = TRUE)
   if (length(truth_file) != 1) stop("expected one randSynthetic*Patients.csv in ", dir)
   read_csv(truth_file, show_col_types = FALSE) |>
-    select(patient = PatientId, cost, turnover, n0, rFrac, K, rS, dD = DD, sigma) |>
+    select(patient = PatientId, cost, turnover, n0, rFrac, K, rS, dD, sigma) |>
     mutate(AT_score = calc_delta_benefit(kappa = .2, dR = turnover * rS, K = K, rR = (1 - cost) * rS, R0 = rFrac * n0),
            psa0     = n0,
            K        = K / n0,
            n0       = 1)
 }
 
-#ids of the synthetic patients that have an observation file
-list_synth_patients <- function(dir = here::here("synth_data")){
-  list.files(dir, pattern = "^patient_\\d+_OBSdf\\.csv$") |>
-    parse_number() |>
-    sort()
+#all synthetic patients in one table, as written by python/genertate_synth_AT_trial_data.ipynb (ODEModel.results_df):
+#a daily grid per patient, where Observation is NA except at the visits and DrugConcentration is the dose from each time on
+#the file is read once and kept until it changes, since every patient is loaded from it
+.synth_cache <- new.env()
+read_synth_patients <- function(dir = here::here("synth_data")){
+  path <- file.path(dir, "synth_patients.csv")
+  key  <- paste(normalizePath(path), file.mtime(path))
+  if (is.null(.synth_cache[[key]])) .synth_cache[[key]] <- read_csv(path, show_col_types = FALSE)
+  .synth_cache[[key]]
 }
 
-#loads one synthetic patient in the same format as load_bruchovsky_patient, so make_segment_df works on it
-#in the python output DrugConcentration is the dose given in the interval leading up to a visit, here it is the dose from the visit on
+#ids of the synthetic patients
+list_synth_patients <- function(dir = here::here("synth_data")){
+  sort(unique(read_synth_patients(dir)$PatientId))
+}
+
+#loads one synthetic patient's visits in the same format as load_bruchovsky_patient, so make_segment_df works on it
 #a cycle is a treatment period and the treatment holiday after it. The visit where treatment restarts still belongs to the old cycle,
-#since its PSA was measured at the end of the holiday
+#since its PSA was measured at the end of the holiday. The baseline has no interval before it (dose_before is NA), so it is never a restart
 load_synth_patient <- function(patient_id, dir = here::here("synth_data")){
-  read_csv(file.path(dir, sprintf("patient_%d_OBSdf.csv", patient_id)), show_col_types = FALSE, name_repair = "unique_quiet") |>
-    select(Time, PSA = Observation, TumourSize, dose_before = DrugConcentration) |>
+  visits <- read_synth_patients(dir) |>
+    filter(PatientId == patient_id, !is.na(Observation)) |>
+    arrange(Time)
+  if (!nrow(visits)) stop("no synthetic patient ", patient_id, " in ", dir)
+  visits |>
+    transmute(Time,
+              PSA               = Observation,
+              TumourSize,
+              DrugConcentration = as.integer(DrugConcentration),
+              dose_before       = lag(DrugConcentration),
+              CycleId           = 1 + cumsum(coalesce(dose_before == 1 & lag(dose_before) == 0, FALSE)),
+              segment           = consecutive_id(DrugConcentration))
+}
+
+#one synthetic patient's daily true trajectory. TumourSizeNorm is on the scale of the observations (size / initial size)
+load_synth_trajectory <- function(patient_id, dir = here::here("synth_data")){
+  read_synth_patients(dir) |>
+    filter(PatientId == patient_id) |>
     arrange(Time) |>
-    mutate(DrugConcentration = as.integer(lead(dose_before, default = last(dose_before))),
-           CycleId           = 1 + cumsum(dose_before == 1 & lag(dose_before, default = 1) == 0),
-           segment           = consecutive_id(DrugConcentration))
+    mutate(TumourSizeNorm = TumourSize / first(TumourSize))
 }
 
 #build the Stan data list for one synthetic patient, keeping the first n_cycles cycles
@@ -83,6 +105,31 @@ make_synth_stan_data <- function(patient_id, n_cycles = Inf, priors, fixed_vals 
     make_fixed_val_data(modifyList(list(n0 = 1), as.list(fixed_vals))),
     fit_psa0   = 1,
     list(psa0_prior = c(log(obs_df$PSA[1]), psa0_prior_sd)), #centred on the first observation. In a list so c() keeps it as one vector
+    prior_only = prior_only,
+    priors,
+    run_diagnostics = run_diagnostics)
+}
+
+#build the Stan data list for model_switchable.stan, keeping the first n_cycles cycles
+#n0 is fitted (unless fixed) and the model is compared with the observations directly, mu = (S + R) / n0 in Stan
+make_switchable_stan_data <- function(patient_id, n_cycles = Inf, priors, fixed_vals = list(), run_diagnostics = 1,
+                                      prior_only = 0, dir = here::here("synth_data")) {
+  patient_data <- load_synth_patient(patient_id, dir) |> filter(CycleId <= n_cycles)
+  segments_df  <- make_segment_df(patient_data)
+  output_times <- make_output_times(patient_data, segments_df)
+  obs_df       <- patient_data |> filter(!is.na(PSA))
+  c(list(n_segments             = nrow(segments_df),
+         starting_segment_times = segments_df$segment_start_time,
+         end_segment_times      = segments_df$segment_end_time,
+         treatment_indicator    = segments_df$Treatment,
+         n_out                  = length(output_times),
+         output_times           = output_times,
+         segment_from_idx       = segments_df$segment_from_idx,
+         segment_to_idx         = segments_df$segment_to_idx,
+         n_obs                  = nrow(obs_df),
+         obs_idx                = match(obs_df$Time, output_times),
+         PSA_norm               = obs_df$PSA),
+    make_fixed_val_data(fixed_vals),
     prior_only = prior_only,
     priors,
     run_diagnostics = run_diagnostics)

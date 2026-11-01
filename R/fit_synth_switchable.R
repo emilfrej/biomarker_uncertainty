@@ -35,31 +35,6 @@ priors <- list(
 )
 fixed_vals <- list(K = 1)
 
-#same as make_synth_stan_data, but n0 is fitted and the model is compared with the raw observations directly (no psa0)
-make_switchable_stan_data <- function(patient_id, n_cycles) {
-  patient_data <- load_synth_patient(patient_id) |> filter(CycleId <= n_cycles)
-  segments_df  <- make_segment_df(patient_data)
-  output_times <- make_output_times(patient_data, segments_df)
-  obs_df       <- patient_data |> filter(!is.na(PSA))
-  c(list(n_segments             = nrow(segments_df),
-         starting_segment_times = segments_df$segment_start_time,
-         end_segment_times      = segments_df$segment_end_time,
-         treatment_indicator    = segments_df$Treatment,
-         n_out                  = length(output_times),
-         output_times           = output_times,
-         segment_from_idx       = segments_df$segment_from_idx,
-         segment_to_idx         = segments_df$segment_to_idx,
-         n_obs                  = nrow(obs_df),
-         obs_idx                = match(obs_df$Time, output_times),
-         PSA_norm               = obs_df$PSA),
-    make_fixed_val_data(fixed_vals),
-    fit_psa0   = 0,
-    list(psa0_prior = c(0, 1)), #not used with fit_psa0 = 0
-    prior_only = 0,
-    priors,
-    run_diagnostics = 1)
-}
-
 #one draw from the prior per chain. Stan's default inits (uniform(-2, 2) on the unconstrained scale) put e.g. rS up to 7,
 #where the ODE gets stiff and chains got stuck in warmup. The julia port had the same problem (julia_port/PROJECT_LOG.md)
 draw_prior_init <- function() {
@@ -137,7 +112,7 @@ for (j in seq_len(nrow(jobs))) {
     break
   }
 
-  stan_data  <- make_switchable_stan_data(job$patient, job$n_cycles)
+  stan_data  <- make_switchable_stan_data(job$patient, job$n_cycles, priors, fixed_vals)
   set.seed(job$patient)
   inits      <- replicate(4, draw_prior_init(), simplify = FALSE)
   start_time <- Sys.time()

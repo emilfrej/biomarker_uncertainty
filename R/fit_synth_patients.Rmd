@@ -1,0 +1,289 @@
+---
+title: "Fit synthetic patients"
+output:
+  html_document:
+    toc: true
+---
+
+Fits a few synthetic patients from `python/genertate_synth_AT_trial_data.ipynb` with `stan/model_switchable.stan` and
+checks the fits: sampler diagnostics, trace and pairs plots, recovery of the true parameters, posterior predictive
+checks and LOO.
+
+```{r setup, message = FALSE}
+pacman::p_load(tidyverse, cmdstanr, posterior, bayesplot, loo, here, patchwork, knitr)
+source(here("R/functions.R"))
+source(here("R/synth_functions.R"))
+theme_set(theme_bw())
+```
+
+## Settings
+
+Fits are saved in `<fit_dir>/<window>` and reused on the next run, unless `refit` is TRUE.
+
+```{r run-settings}
+patients      <- c(3, 4, 6)
+window        <- "two_cycles" #first_cycle, two_cycles or full_history (synth_windows in R/synth_functions.R)
+chains        <- 4
+iter_warmup   <- 1000
+iter_sampling <- 1000
+adapt_delta   <- 0.95
+refit         <- FALSE
+synth_dir     <- here("synth_data")
+fit_dir       <- here("fits/synth_rmd")
+```
+
+The priors are `priorDic` from the notebook, which the patients were drawn from. scipy `lognorm(s, scale)` is
+`lognormal(log(scale), s)`. K is fixed at 1, as when the patients were generated, so `K_prior` is not used.
+`rFrac` is beta(1, 20) as in the notebook, not beta(0.3, 40) as in `R/fit_synth_switchable.R` (BUGS.md D2).
+
+```{r settings}
+priors <- list(
+  cost_prior     = c(1, 1),
+  turnover_prior = c(1.2, 2.5),
+  n0_prior       = c(2, 2),
+  rFrac_prior    = c(1, 20),
+  K_prior        = c(log(2), 0.8),
+  rS_prior       = c(log(0.012), 0.6),
+  dD_prior       = c(log(2.5), 0.6),
+  sigma_prior    = c(-5, 1)
+)
+fixed_vals <- list(K = 1)
+fit_params <- c("cost", "turnover", "n0", "rFrac", "rS", "dD", "sigma")
+
+n_cycles <- synth_windows[[window]]
+out_dir  <- file.path(fit_dir, window)
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+#true parameters, renamed to match the Stan model
+truth <- list.files(synth_dir, pattern = "^randSynthetic\\d+Patients\\.csv$", full.names = TRUE) |>
+  read_csv(show_col_types = FALSE, name_repair = "unique_quiet") |>
+  select(patient = PatientId, cost, turnover, n0, rFrac, rS, dD, sigma) |>
+  filter(patient %in% patients)
+kable(truth, digits = 3)
+```
+
+## Data
+
+The line is the true size relative to the initial size, on the same scale as the observations. Points are the noisy
+observations. Filled points are the ones in the fitting window. Shaded stretches are on treatment.
+
+```{r data, fig.height = 2.5 * length(patients)}
+trajectories <- map_dfr(patients, \(id) load_synth_trajectory(id, synth_dir) |> mutate(patient = id))
+visits <- map_dfr(patients, \(id) load_synth_patient(id, synth_dir) |> mutate(patient = id)) |>
+  mutate(in_window = CycleId <= n_cycles)
+
+#runs of constant dose on the daily grid, as rectangles. A run ends where the next one starts
+treated <- trajectories |>
+  group_by(patient, run = consecutive_id(DrugConcentration)) |>
+  summarise(start = first(Time), dose = first(DrugConcentration), .groups = "drop_last") |>
+  mutate(end = lead(start, default = Inf)) |>
+  ungroup() |>
+  filter(dose > 0)
+
+ggplot() +
+  geom_rect(data = treated, aes(xmin = start, xmax = pmin(end, max(trajectories$Time)), ymin = -Inf, ymax = Inf),
+            fill = "grey85") +
+  geom_line(data = trajectories, aes(Time, TumourSizeNorm)) +
+  geom_point(data = visits, aes(Time, PSA, shape = in_window), size = 1.5) +
+  scale_shape_manual(values = c(`TRUE` = 16, `FALSE` = 1), name = "In window") +
+  facet_wrap(~patient, ncol = 1, scales = "free", labeller = label_both) +
+  labs(y = "size / initial size")
+```
+
+## Fit
+
+The Stan data come from `make_switchable_stan_data` in `R/synth_functions.R`, as in `R/fit_synth_switchable.R`: n0 is
+fitted, and the model is compared with the observations directly (`mu = (S + R) / n0` in Stan).
+`tests/test_stan_matches_simulator.R` checks that with the true parameters, Stan's `mu` equals the simulated trajectory.
+
+```{r inits}
+#one draw from the prior per chain. Stan's default inits (uniform(-2, 2) on the unconstrained scale) put e.g. rS up to 7,
+#where the ODE gets stiff and chains got stuck in warmup
+draw_prior_init <- function() {
+  list(cost_free     = array(rbeta(1, priors$cost_prior[1], priors$cost_prior[2])),
+       turnover_free = array(rbeta(1, priors$turnover_prior[1], priors$turnover_prior[2])),
+       n0_free       = array(rbeta(1, priors$n0_prior[1], priors$n0_prior[2])),
+       #small rFrac draws can underflow to 0, which is outside the support
+       rFrac_free    = array(max(rbeta(1, priors$rFrac_prior[1], priors$rFrac_prior[2]), 1e-8)),
+       rS_free       = array(rlnorm(1, priors$rS_prior[1], priors$rS_prior[2])),
+       dD_free       = array(rlnorm(1, priors$dD_prior[1], priors$dD_prior[2])),
+       sigma         = rlnorm(1, priors$sigma_prior[1], priors$sigma_prior[2]))
+}
+```
+
+A fit that gets stuck in a stiff region of the ODE can run for a long time. For many patients, use
+`R/fit_synth_switchable.R`, which runs each fit with a time limit.
+
+```{r fit, results = "hide", message = FALSE}
+stan_model <- cmdstan_model(here("stan/model_switchable.stan"))
+
+fit_one <- function(patient_id) {
+  fit_path <- make_fit_path(patient_id, dir = out_dir)
+  if (file.exists(fit_path) && !refit) return(readRDS(fit_path))
+  set.seed(patient_id) #inits are seeded per patient
+  start <- Sys.time()
+  fit <- stan_model$sample(data            = make_switchable_stan_data(patient_id, n_cycles, priors, fixed_vals,
+                                                                   dir = synth_dir),
+                           init            = map(seq_len(chains), \(i) draw_prior_init()),
+                           chains          = chains,
+                           parallel_chains = chains,
+                           iter_warmup     = iter_warmup,
+                           iter_sampling   = iter_sampling,
+                           adapt_delta     = adapt_delta,
+                           seed            = patient_id,
+                           refresh         = 0,
+                           show_messages   = FALSE)
+  fit$save_object(fit_path)
+  #run time and settings next to the fit, as in fit_synth_patients. Fit objects are locked, so they can't hold them
+  saveRDS(list(seconds = as.numeric(difftime(Sys.time(), start, units = "secs")), priors = priors,
+               fixed_vals = fixed_vals, n_cycles = n_cycles, adapt_delta = adapt_delta),
+          sub("\\.rds$", "_settings.rds", fit_path))
+  fit
+}
+
+fits <- set_names(patients) |> map(fit_one)
+```
+
+## Sampler diagnostics
+
+What to look for: no divergences, no hits of the maximum tree depth, E-BFMI above 0.3, R-hat below 1.01 and bulk and
+tail ESS above about 400 for every parameter.
+
+```{r diagnostics}
+diagnostics <- imap_dfr(fits, \(fit, id) {
+  sampler <- fit$diagnostic_summary(quiet = TRUE)
+  summ    <- fit$summary(fit_params, "rhat", "ess_bulk", "ess_tail")
+  tibble(patient      = as.integer(id),
+         n_obs        = fit$metadata()$stan_variable_sizes$PSA_pred,
+         seconds      = readRDS(sub("\\.rds$", "_settings.rds", make_fit_path(as.integer(id), out_dir)))$seconds,
+         divergences  = sum(sampler$num_divergent),
+         treedepth    = sum(sampler$num_max_treedepth),
+         min_ebfmi    = min(sampler$ebfmi),
+         max_rhat     = max(summ$rhat, na.rm = TRUE),
+         min_ess_bulk = min(summ$ess_bulk, na.rm = TRUE),
+         min_ess_tail = min(summ$ess_tail, na.rm = TRUE))
+})
+kable(diagnostics, digits = c(0, 0, 0, 0, 0, 2, 3, 0, 0))
+```
+
+Per-parameter summaries:
+
+```{r summaries}
+imap_dfr(fits, \(fit, id) fit$summary(fit_params, "median", ~quantile(.x, c(0.05, 0.95)), "rhat", "ess_bulk", "ess_tail") |>
+           mutate(patient = as.integer(id), .before = 1)) |>
+  kable(digits = 3)
+```
+
+### Trace plots
+
+Chains should overlap and look like noise around a stable level.
+
+```{r trace, fig.height = 6}
+color_scheme_set("mix-blue-red")
+iwalk(fits, \(fit, id) print(mcmc_trace(fit$draws(fit_params), facet_args = list(ncol = 4)) + ggtitle(paste("patient", id))))
+```
+
+### Pairs plots
+
+Strong correlations or banana shapes show parameters the data can't separate. Divergent transitions are shown in red,
+and if they cluster in one region, that is where the sampler has trouble.
+
+```{r pairs, fig.height = 8, fig.width = 8}
+pair_params <- c("cost", "turnover", "n0", "rS", "dD")
+iwalk(fits, \(fit, id) {
+  print(mcmc_pairs(fit$draws(pair_params), np = nuts_params(fit), off_diag_fun = "hex",
+                   np_style = pairs_style_np(div_color = "red")))
+  cat("patient", id, "\n")
+})
+```
+
+## Parameter recovery
+
+Posterior median with 50% and 90% intervals for each patient, against the true value (red cross). The grey band is the
+prior's 90% interval. A posterior that fills the grey band means the data say little about that parameter.
+
+```{r recovery, fig.height = 5, fig.width = 10}
+posterior_intervals <- imap_dfr(fits, \(fit, id) {
+  fit$draws(fit_params, format = "draws_df") |>
+    as_tibble() |>
+    select(all_of(fit_params)) |>
+    pivot_longer(everything(), names_to = "param") |>
+    group_by(param) |>
+    summarise(median = median(value),
+              q05 = quantile(value, .05), q25 = quantile(value, .25),
+              q75 = quantile(value, .75), q95 = quantile(value, .95)) |>
+    mutate(patient = as.integer(id))
+})
+
+true_values <- truth |> pivot_longer(-patient, names_to = "param", values_to = "truth")
+
+#90% prior intervals. Beta priors are given as shape parameters, lognormal priors as log-scale mean and sd
+prior_intervals <- tibble(param = fit_params) |>
+  mutate(prior = map(param, \(p) priors[[paste0(p, "_prior")]]),
+         is_beta = param %in% c("cost", "turnover", "n0", "rFrac"),
+         lo = map2_dbl(prior, is_beta, \(pr, b) if (b) qbeta(.05, pr[1], pr[2]) else qlnorm(.05, pr[1], pr[2])),
+         hi = map2_dbl(prior, is_beta, \(pr, b) if (b) qbeta(.95, pr[1], pr[2]) else qlnorm(.95, pr[1], pr[2])))
+
+posterior_intervals |>
+  left_join(true_values, by = c("patient", "param")) |>
+  ggplot(aes(y = factor(patient))) +
+  geom_rect(data = prior_intervals, aes(xmin = lo, xmax = hi, ymin = -Inf, ymax = Inf), inherit.aes = FALSE,
+            fill = "grey90") +
+  geom_linerange(aes(xmin = q05, xmax = q95)) +
+  geom_linerange(aes(xmin = q25, xmax = q75), linewidth = 1.5) +
+  geom_point(aes(x = median), size = 2) +
+  geom_point(aes(x = truth), shape = 4, colour = "red", size = 3, stroke = 1.2) +
+  facet_wrap(~param, scales = "free_x", nrow = 2) +
+  labs(x = NULL, y = "patient")
+```
+
+## Posterior predictive check
+
+The ribbons are 50% and 90% intervals of `PSA_pred`, a new noisy measurement at each fitted visit. Points are the
+observations, the line is the true trajectory. About 90% of points should fall inside the outer ribbon.
+
+```{r ppc, fig.height = 2.5 * length(patients)}
+ppc <- imap_dfr(fits, \(fit, id) {
+  obs <- visits |> filter(patient == as.integer(id), in_window)
+  fit$draws("PSA_pred", format = "draws_matrix") |>
+    as_tibble() |>
+    pivot_longer(everything(), names_to = "i") |>
+    mutate(i = parse_number(i)) |>
+    group_by(i) |>
+    summarise(q05 = quantile(value, .05), q25 = quantile(value, .25),
+              q75 = quantile(value, .75), q95 = quantile(value, .95)) |>
+    mutate(Time = obs$Time[i], PSA = obs$PSA[i], patient = as.integer(id))
+})
+
+ppc |> group_by(patient) |> summarise(coverage_90 = mean(PSA >= q05 & PSA <= q95)) |> kable(digits = 2)
+
+#the true trajectory up to the last fitted visit
+fitted_trajectories <- trajectories |>
+  inner_join(ppc |> group_by(patient) |> summarise(end = max(Time)), by = "patient") |>
+  filter(Time <= end)
+
+ggplot(ppc, aes(Time)) +
+  geom_ribbon(aes(ymin = q05, ymax = q95), fill = "steelblue", alpha = .25) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), fill = "steelblue", alpha = .4) +
+  geom_line(data = fitted_trajectories, aes(y = TumourSizeNorm)) +
+  geom_point(aes(y = PSA), size = 1.2) +
+  facet_wrap(~patient, ncol = 1, scales = "free", labeller = label_both) +
+  labs(y = "size / initial size")
+```
+
+## LOO
+
+PSIS-LOO from `log_lik`. Pareto k above 0.7 marks visits that the fit depends on strongly, so the LOO estimate for
+that patient is unreliable.
+
+```{r loo, warning = FALSE}
+imap_dfr(fits, \(fit, id) {
+  l <- fit$loo()
+  tibble(patient  = as.integer(id),
+         elpd_loo = l$estimates["elpd_loo", "Estimate"],
+         se       = l$estimates["elpd_loo", "SE"],
+         p_loo    = l$estimates["p_loo", "Estimate"],
+         n_k_over_0.7 = sum(pareto_k_values(l) > 0.7))
+}) |>
+  kable(digits = 2)
+```

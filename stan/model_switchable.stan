@@ -147,7 +147,7 @@ transformed parameters{
   //some times ODE returns very small but neg values. force these to zero. Claude sugggested reparametrizing to working in log(cells) instead
   vector[n_obs] mu;
   for (i in 1:n_obs){
-    mu[i] = (fmax(likelihood_states[i][1], 0) + fmax(likelihood_states[i][2], 0));
+    mu[i] = (fmax(likelihood_states[i][1] / n0, 0) + fmax(likelihood_states[i][2] / n0, 0));
   }
 }
 
