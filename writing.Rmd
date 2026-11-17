@@ -4,7 +4,9 @@ output: html_document
 bibliography: references.bib
 ---
 
-DATA:
+### 
+
+## DATA:
 
 Zhang: Patients were monitored 4-6 weeks. Pt on abiraterone until PSA \< 50% of t1, and then holiday until til PSA returned ≥100% of t1. Either surgical or chemical to maintain castration levels of testosterone. Were taken of trial for radio graphic progression or ECOG deterioration while on treatment [@zhang2022].
 
@@ -44,19 +46,27 @@ $$
 
 #### ODE is solved Treatment segments
 
-ODE implementation and data wrangling The Lotka Volterra model is fitted as ODE where the ODE is solved in treatment segments. This means that a starting cell population is inferred and the ODE uses this to solve the cell population up to and including the day when the treatment changes. This is the used as the starting point for the next ODE segment that is solved until up to and including when the treatment switches back. The data at times contains observations where the treatment is switched despite some of the rows on which a switch in treatment is reported don't contain PSA measurements. This is different to biomarker paper that drops all NON psa observations. Per stan user guide.
+ODE implementation and data wrangling The Lotka-Volterra model is fitted as ODE where the ODE is solved in treatment segments. This means that a starting cell population is inferred and the ODE uses this to solve the cell population up to and including the day when the treatment changes. This is the used as the starting point for the next ODE segment that is solved until up to and including when the treatment switches back. The data at times contains observations where the treatment is switched despite some of the rows on which a switch in treatment is reported don't contain PSA measurements. This is different to biomarker paper that drops all NON psa observations. Per Stan user guide.
+
+### Dividing by first PSA measurement
+
+Since the model doesn't inform how much PSA is produced by a certain number of cells, the model can only estimate how the relative distance from carrying capacity by observing growth rates. To remove the scale how much PSA to how tumor from the system, we divide by the first measurement. N0, sets the level but should always more or less equal the first obs. So its rather that
 
 ### Using pathfinder for init
 
 Using pathfinder inits was to avoid situations where one chain would fit much slower than the rest.
 
+### posterior geometry 
+
+Posterior geometry is problematic even problematic synthetic data even with tight priors. Turnover and dD form a banana making step sizing difficult since optimal step-sizing in one direction is sub optimal in opposite direction. With standard step size adaptation on synthetic data NUTS HMC divergences frequently.
+
+![](images/clipboard-431430271.png)
+
+Lowering adaptation of the step sizes reduces the amount of divergences, but it comes at the cost of sampling speed and potentially increasing the auto-correlation in drawn samples leading to even further need of more iterations to reach same resolution of the posterior as with more aggressive step sizing.
+
 ## Forward simulation details:
 
 The progression in the real word is the change of one random variable to the next, while the simulation uses the underlying tumor volume to test when progression happens. Realistically, the simulation should also consider consider progression difference in PSA values rather than underlying tumor burden.
-
-### Dividing by first PSA measurement
-
-Since the model doesn't inform how much PSA is produced by a certain number of cells, the model can only estimate how the relative distance from carrying capacity by observing growth rates. To remove the scale how much PSA to how tumor from the system, we divide by the first measurement. N0, sets the level but should always more or less equal the first obs. So its rather that
 
 #### Unsolved:
 
@@ -64,7 +74,7 @@ How to deal with patients that did progress vs didn't progress on trial. Probabl
 
 How to deal with non-PSA progression. See survival model paper by desmee
 
-spurios steady state suggesting that patients would never progress
+Spurios steady state suggesting that patients would never progress
 
 Negative AT values when
 

@@ -13,7 +13,6 @@ pacman::p_load(tidybayes, bayesplot, posterior, cmdstanr)
 Update since last:
 
 ## plot posteriors
-
 ```{r}
 #AT scores reported in the biomarker paper, drawn as a dashed line on the AT score plot
 paper_at_scores <- tibble(patient = c(12, 20, 25, 78, 85),
