@@ -18,8 +18,19 @@ def prior_init(priorDic, rng):
     return {**{f'{k}_free': [v] for k, v in draw.items() if k != 'sigma'}, 'sigma': draw['sigma']}
 
 
+def u_init(priorDic, rng):
+    """prior_init for model_switchable_u.stan, redrawn until u is within its bounds: above 1 and below 1 / n0"""
+    while True:
+        init = prior_init(priorDic, rng)
+        if 1 < init['u_free'][0] < 1 / init['n0_free'][0]:
+            return init
+
+
 def make_stan_data(patients_df, patient_id, priors):
-    """Stan data for model_switchable.stan from one patient's rows (columns PatientId, Time, DrugConcentration, Observation)"""
+    """Stan data for model_switchable.stan, or model_switchable_u.stan when priors has u_prior in place of turnover_prior,
+    from one patient's rows (columns PatientId, Time, DrugConcentration, Observation).
+    Every parameter with a <name>_prior in priors is fitted; K is fixed at 1"""
+    fitted = [k.removesuffix('_prior') for k in priors if k != 'sigma_prior']  # sigma is always fitted, it has no flag
     visits = patients_df[patients_df['PatientId'] == patient_id]
     obs = visits[visits['Observation'].notna()] 
     visits['dose_shifted'] = visits['DrugConcentration'].shift()
@@ -49,13 +60,12 @@ def make_stan_data(patients_df, patient_id, priors):
         'n_obs':                  len(obs),
         'obs_idx':                [output_times.index(t) + 1 for t in obs['Time']],
         'PSA_norm':               obs['Observation'].tolist(),
-        #fix param flags
-        'fit_cost': 1, 'fit_turnover': 1, 'fit_n0': 1, 'fit_rFrac': 1, 'fit_rS': 1, 'fit_K': 0, 'fit_dD': 1,
-        'cost_fixed_val': 0, 'turnover_fixed_val': 0, 'n0_fixed_val': 0, 'rFrac_fixed_val': 0,
-        'rS_fixed_val': 0, 'K_fixed_val': 1, 'dD_fixed_val': 0,
+        #fix param flags: fit the parameters with a prior (turnover or u), K fixed at 1
+        **{f'fit_{p}': 1 for p in fitted}, **{f'{p}_fixed_val': 0 for p in fitted},
+        'fit_K': 0, 'K_fixed_val': 1,
         **priors,
         'K_prior':                [1, 1],
-        #1 samples the prior only (the data are ignored, but the ODE is still solved for every draw)
+        #1 samples the prior only
         'prior_only':             0,
         'run_diagnostics':        1,
     }

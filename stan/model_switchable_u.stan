@@ -1,5 +1,6 @@
 //model_switchable.stan with a prior on u in place of the prior on turnover. u = (1 - turnover / (1 - cost)) / n0 is the size the tumour
 //levels off at on continuous therapy relative to its starting size, so u > 1.2 means progression. Assumes K = 1. Nothing else differs.
+//The prior on u is truncated below at 1 (the tumour levels off above its starting size on continuous therapy).
 functions {
   vector dpop_dt(real t, vector state, array[] real theta, int D){
     
@@ -80,7 +81,7 @@ parameters {
   array[fit_rS] real<lower=0> rS_free;
   array[fit_n0] real<lower=0, upper=1> n0_free;
   //u = (1 - turnover / (1 - cost)) / n0: the plateau on continuous therapy relative to the starting size. u > 1.2 means progression
-  array[fit_u] real<lower=0, upper= 1 / (fit_n0 ? n0_free[1] : n0_fixed_val)> u_free;
+  array[fit_u] real<lower=1, upper= 1 / (fit_n0 ? n0_free[1] : n0_fixed_val)> u_free;
   //K is bounded below by n0 (fitted or fixed), so the tumour always starts below carrying capacity
   array[fit_K] real<lower=(fit_n0 ? n0_free[1] : n0_fixed_val)> K_free;
   array[fit_dD] real<lower=0> dD_free;
@@ -158,7 +159,9 @@ transformed parameters{
 model {
   //set priors for parameters that are being fitted
   if (fit_cost) cost_free ~ beta(cost_prior[1], cost_prior[2]);
-  if (fit_u) u_free ~ lognormal(u_prior[1], u_prior[2]);
+  //truncated at 1 from below. The upper bound 1 / n0 is left out of T[] on purpose: it is handled by the declared bound
+  //only, so the joint prior is p(n0) p(u) restricted to u * n0 < 1, as in the generator
+  if (fit_u) u_free[1] ~ lognormal(u_prior[1], u_prior[2]) T[1, ];
   if (fit_n0) n0_free ~ beta(n0_prior[1], n0_prior[2]);
   if (fit_rFrac) rFrac_free ~ beta(rFrac_prior[1], rFrac_prior[2]);
   if (fit_K) K_free ~ lognormal(K_prior[1], K_prior[2]);
@@ -181,7 +184,7 @@ generated quantities{
   if (run_diagnostics == 1){
     lprior = lognormal_lpdf(sigma|sigma_prior[1], sigma_prior[2]);
     if (fit_cost) lprior += beta_lpdf(cost|cost_prior[1], cost_prior[2]);
-    if (fit_u) lprior += lognormal_lpdf(u | u_prior[1], u_prior[2]);
+    if (fit_u) lprior += lognormal_lpdf(u | u_prior[1], u_prior[2]) - lognormal_lccdf(1 | u_prior[1], u_prior[2]);  //truncated at 1
     if (fit_n0) lprior += beta_lpdf(n0|n0_prior[1], n0_prior[2]);
     if (fit_rFrac) lprior += beta_lpdf(rFrac|rFrac_prior[1], rFrac_prior[2]);
     if (fit_K) lprior += lognormal_lpdf(K | K_prior[1], K_prior[2]);
