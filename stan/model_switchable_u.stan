@@ -80,7 +80,7 @@ parameters {
   array[fit_rS] real<lower=0> rS_free;
   array[fit_n0] real<lower=0, upper=1> n0_free;
   //u = (1 - turnover / (1 - cost)) / n0: the plateau on continuous therapy relative to the starting size. u > 1.2 means progression
-  array[fit_u] real<lower=0, upper=1 / (fit_n0 ? n0_free[1] : n0_fixed_val)> u_free;
+  array[fit_u] real<lower=0, upper= 1 / (fit_n0 ? n0_free[1] : n0_fixed_val)> u_free;
   //K is bounded below by n0 (fitted or fixed), so the tumour always starts below carrying capacity
   array[fit_K] real<lower=(fit_n0 ? n0_free[1] : n0_fixed_val)> K_free;
   array[fit_dD] real<lower=0> dD_free;
