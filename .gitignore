@@ -45,3 +45,5 @@ AT_repo/
 synth_data/
 synth_data_u/
 synth_data_gallagher/
+sbc_results/
+param_recov*/

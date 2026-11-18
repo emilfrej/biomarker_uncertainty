@@ -48,10 +48,10 @@ def generate_u_patients(priorDic, n_patients, out_dir, seed=1, t_end=5000, check
         #run loop until viable param combination is found
         while True:
             priorDrawDic = draw_params(priorDic)
-            if priorDrawDic['u'] * priorDrawDic['n0'] >= 1:
-                continue #the plateau can't be above the carrying capacity
-            priorDrawDic['turnover'] = (1 - priorDrawDic['cost']) * (1 - priorDrawDic['u'] * priorDrawDic['n0'])
             priorDrawDic['K'] = 1 #hard code carrying cap
+            if priorDrawDic['u'] * priorDrawDic['n0'] >= priorDrawDic['K']:
+                continue #rstar cant more than K
+            priorDrawDic['turnover'] = (1 - priorDrawDic['cost']) * (1 - priorDrawDic['u'] * priorDrawDic['n0'])
             paramDic = complete_param_dict(**{k: v for k, v in priorDrawDic.items() if k != 'u'})
             if not progress_on_ct(paramDic=paramDic):
                 print("Analytically doesnt progress CT")
