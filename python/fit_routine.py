@@ -27,7 +27,7 @@ def fit_patient(synth_df, patient_id, stan_model, priorDic, rng, out_dir):
     stan_data = make_stan_data(synth_df, patient_id=patient_id, priors=priors)
     pathfinder_fit = stan_model.pathfinder(data=stan_data, seed=4, inits=u_init(priorDic, rng))
     post_fit = stan_model.sample(data=stan_data, chains=4, seed=4, inits=pathfinder_fit.create_inits(seed=4, chains=4),
-                                 adapt_delta=0.8, show_progress=True, output_dir=out_dir / f'patient_{patient_id}_csv',
+                                 adapt_delta=0.95, show_progress=True, output_dir=out_dir / f'patient_{patient_id}_csv',
                                  save_warmup=True, save_latent_dynamics=True, timeout=300)
     idata = az.from_cmdstanpy(posterior=post_fit) 
     idata['sample_stats'] = idata.sample_stats.to_dataset().isel(draw=slice(-idata.posterior.sizes['draw'], None)).assign_coords(draw=idata.posterior.draw)
@@ -62,6 +62,6 @@ def fit_all(synth_df, out_dir, stan_model, priorDic, seed=1, overwrite=True):
 
 if __name__ == '__main__':
     synth_dir = ROOT / 'synth_data_u'
-    synth_df, _ = generate_u_patients(priorDic, n_patients=10, out_dir=synth_dir, seed=1)
+    synth_df, _ = generate_u_patients(priorDic, n_patients=250, out_dir=synth_dir, seed=1)
     stan_model = cmdstanpy.CmdStanModel(stan_file=ROOT / 'stan' / 'model_switchable_u.stan')
     fit_all(synth_df, synth_dir / 'fits', stan_model, priorDic, seed=1)

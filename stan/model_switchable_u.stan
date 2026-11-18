@@ -1,6 +1,7 @@
 //model_switchable.stan with a prior on u in place of the prior on turnover. u = (1 - turnover / (1 - cost)) / n0 is the size the tumour
 //levels off at on continuous therapy relative to its starting size, so u > 1.2 means progression. Assumes K = 1. Nothing else differs.
 //The prior on u is truncated below at 1 (the tumour levels off above its starting size on continuous therapy).
+//Observation noise is multiplicative (lognormal), unlike model_switchable.stan.
 functions {
   vector dpop_dt(real t, vector state, array[] real theta, int D){
     
@@ -170,14 +171,15 @@ model {
 
   sigma ~ lognormal(sigma_prior[1], sigma_prior[2]);
   
-  //likelihood if prior only is not passed. Noise is proportional to the tumour size, as in LotkaVolterraModel.EmitObservation
-  if (!prior_only) PSA_norm ~ normal(mu, sigma);
+  //likelihood if prior only is not passed. Multiplicative noise: log(PSA_norm) ~ normal(log(mu), sigma), so sigma is roughly
+  //a relative error and PSA_norm must be positive. Matches LotkaVolterraModel.emit_observation in at-modelling
+  if (!prior_only) PSA_norm ~ lognormal(log(mu), sigma);
 
 }
 
 generated quantities{
   //posterior predictive PSA: a new measurement at each observation time
-  array[n_obs] real PSA_pred = normal_rng(mu, sigma);
+  array[n_obs] real PSA_pred = lognormal_rng(log(mu), sigma);
   real lprior;
   vector[n_obs] log_lik;
   //if flag is on, get log liklihood and prior estimate of making draw
@@ -192,7 +194,7 @@ generated quantities{
     if (fit_dD) lprior += lognormal_lpdf(dD | dD_prior[1], dD_prior[2]);
     // for each observation compute the log likelihood of making that observation, used for model comp and sens analysis
     for (i in 1:n_obs){
-      log_lik[i] = normal_lpdf(PSA_norm[i]| mu[i], sigma);
+      log_lik[i] = lognormal_lpdf(PSA_norm[i] | log(mu[i]), sigma);
     }
   }
 }
