@@ -11,9 +11,10 @@ def draw_params(priorDic : dict):
     return {paramName: dist.rvs() for paramName, dist in priorDic.items()}
 
 
-def complete_param_dict(cost, turnover, n0, rFrac, rS, K, dD, sigma):
+def complete_param_dict(cost, u, n0, rFrac, rS, dD, sigma, K=1):
     """Pass unpacked dict to generate param dict in
-    form required by model class."""
+    form required by model class. turnover is computed from u = (1 - turnover / (1 - cost)) / n0"""
+    turnover = (1 - cost) * (1 - u * n0)
     return {"Cost": cost, "Turnover": turnover,
                 "n0": n0, "R0": rFrac * n0, "S0": (n0 - rFrac*n0),
                 "rS": rS, "rR": rS * (1-cost),
@@ -49,13 +50,14 @@ def generate_u_patients(priorDic, n_patients, out_dir, seed=1, t_end=5000, check
         while True:
             priorDrawDic = draw_params(priorDic)
             priorDrawDic['K'] = 1 #hard code carrying cap
-            if priorDrawDic['u'] * priorDrawDic['n0'] >= priorDrawDic['K']:
-                continue #rstar cant more than K
-            priorDrawDic['turnover'] = (1 - priorDrawDic['cost']) * (1 - priorDrawDic['u'] * priorDrawDic['n0'])
-            paramDic = complete_param_dict(**{k: v for k, v in priorDrawDic.items() if k != 'u'})
-            if not progress_on_ct(paramDic=paramDic):
-                print("Analytically doesnt progress CT")
-                continue
+            #redraw outside model_switchable_u.stan's bounds: u truncated at 1 (T[1, ]) and u * n0 < K
+            if priorDrawDic['u'] < 1 or priorDrawDic['u'] * priorDrawDic['n0'] >= priorDrawDic['K']:
+                continue # u
+            paramDic = complete_param_dict(**priorDrawDic)
+            priorDrawDic['turnover'] = paramDic['Turnover']  #saved in true_params.csv
+            #if not progress_on_ct(paramDic=paramDic):
+            #    print("Analytically doesnt progress CT")
+            #    continue
             model = LotkaVolterraModel(method='RK45', dt=1)
             model.set_params(**{k: v for k, v in paramDic.items() if k not in ("Cost", "Turnover", "n0")})
             model.simulate_at(at_threshold=0.5, interval_length=28, t_end=t_end)
