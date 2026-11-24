@@ -4,33 +4,51 @@ import pandas as pd
 
 
 def to_stan_prior(dist):
-    """scipy beta(a, b) -> [a, b], scipy lognorm(s, scale) -> [log(scale), s] as in Stan's lognormal(mu, sigma)"""
+    """scipy beta(a, b) -> [a, b], scipy lognorm(s, scale) -> [log(scale), s] as in Stan's lognormal(mu, sigma),
+    scipy norm(loc, scale) -> [loc, scale] as in Stan's normal(mu, sigma)"""
     if dist.dist.name == 'beta':
         return list(dist.args)
     if dist.dist.name == 'lognorm':
         return [float(np.log(dist.kwds['scale'])), dist.kwds['s']]
+    if dist.dist.name == 'norm':
+        return [dist.kwds['loc'], dist.kwds['scale']]
     raise ValueError(f"No Stan conversion for {dist.dist.name}")
 
 
 def prior_init(priorDic, rng):
-    """Inits for one chain, drawn from the scipy priors. Stan names the fitted parameters <name>_free, except sigma"""
-    draw = {k: d.rvs(random_state=rng) for k, d in priorDic.items()}
-    return {**{f'{k}_free': [v] for k, v in draw.items() if k != 'sigma'}, 'sigma': draw['sigma']}
+    """Inits for one chain, drawn from the scipy priors"""
+    return {k: d.rvs(random_state=rng) for k, d in priorDic.items()}
 
 
 def u_init(priorDic, rng):
     """prior_init for model_switchable_u.stan, redrawn until u is within its bounds: above 1 and below 1 / n0"""
     while True:
         init = prior_init(priorDic, rng)
-        if 1 < init['u_free'][0] < 1 / init['n0_free'][0]:
+        if 1 < init['u'] < 1 / init['n0']:
             return init
 
 
+def raw_init(priorDic, rng):
+    """u_init's draw converted to model_switchable_raw_jac.stan's raw ODE parameters (rS, rR, d, S0, R0, dD, sigma)"""
+    i = u_init(priorDic, rng)
+    cost, u, n0, rFrac, rS = (i[k] for k in ['cost', 'u', 'n0', 'rFrac', 'rS'])
+    return {'rS': rS, 'rR': (1 - cost) * rS, 'd': (1 - cost) * (1 - u * n0) * rS, 'S0': (1 - rFrac) * n0, 'R0': rFrac * n0,
+            'dD': i['dD'], 'sigma': i['sigma']}
+
+
+def rates_init(priorDic, rng):
+    """u_init's draw converted to model_switchable_rates.stan's parameters: the net growth rates g_off, g_on, g_R, a = rS * n0, n0, rFrac, sigma"""
+    i = u_init(priorDic, rng)
+    cost, u, n0, rFrac, rS, dD = (i[k] for k in ['cost', 'u', 'n0', 'rFrac', 'rS', 'dD'])
+    turnover = (1 - cost) * (1 - u * n0)
+    return {'n0': n0, 'rFrac': rFrac, 'g_off': rS * (1 - turnover), 'g_on': rS * (1 - dD - turnover), 'g_R': rS * (1 - cost - turnover),
+            'a': rS * n0, 'sigma': i['sigma']}
+
+
 def make_stan_data(patients_df, patient_id, priors):
-    """Stan data for model_switchable.stan, or model_switchable_u.stan when priors has u_prior in place of turnover_prior,
+    """Stan data for model_switchable_u.stan (also used by the raw_jac and rates models, which ignore the entries they do not declare),
     from one patient's rows (columns PatientId, Time, DrugConcentration, Observation).
-    Every parameter with a <name>_prior in priors is fitted; K is fixed at 1"""
-    fitted = [k.removesuffix('_prior') for k in priors if k != 'sigma_prior']  # sigma is always fitted, it has no flag
+    K is fixed at 1"""
     visits = patients_df[patients_df['PatientId'] == patient_id]
     obs = visits[visits['Observation'].notna()] 
     visits['dose_shifted'] = visits['DrugConcentration'].shift()
@@ -60,11 +78,8 @@ def make_stan_data(patients_df, patient_id, priors):
         'n_obs':                  len(obs),
         'obs_idx':                [output_times.index(t) + 1 for t in obs['Time']],
         'PSA_norm':               obs['Observation'].tolist(),
-        #fix param flags: fit the parameters with a prior (turnover or u), K fixed at 1
-        **{f'fit_{p}': 1 for p in fitted}, **{f'{p}_fixed_val': 0 for p in fitted},
-        'fit_K': 0, 'K_fixed_val': 1,
+        'K_fixed_val':            1,
         **priors,
-        'K_prior':                [1, 1],
         #1 samples the prior only
         'prior_only':             0,
         'run_diagnostics':        1,

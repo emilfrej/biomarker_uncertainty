@@ -3,21 +3,19 @@
 //The prior on u is truncated below at 1 (the tumour levels off above its starting size on continuous therapy).
 //Observation noise is multiplicative (lognormal), unlike model_switchable.stan.
 functions {
-  vector dpop_dt(real t, vector state, array[] real theta, int D){
+  vector dpop_dt(real t, vector state, array[] real theta, data real K, int D){
     
     // setup params for the ode
     real S  = state[1];
     real R  = state[2];
     real rS = theta[1];
-    real dS = theta[2];
+    real d  = theta[2];  //dS = dR (both turnover * rS), passed once so the ODE solve carries one set of sensitivities for it
     real dD = theta[3];
     real rR = theta[4];
-    real dR = theta[5];
-    real K  = theta[6];
     
     vector[2] dy_dt;
-    dy_dt[1] = rS * S * (1 - (S + R) / K) * (1 - dD * D) - dS * S;
-    dy_dt[2] = rR * R * (1 - (S + R) / K) - dR * R;
+    dy_dt[1] = rS * S * (1 - (S + R) / K) * (1 - dD * D) - d * S;
+    dy_dt[2] = rR * R * (1 - (S + R) / K) - d * R;
     return dy_dt;
   }
 }
@@ -44,27 +42,10 @@ data {
   vector[2] n0_prior; // beta shape parameters
   vector[2] rFrac_prior; // beta shape parameters
   vector[2] sigma_prior; 
-  vector[2] K_prior; // lognormal location and scale
-  vector[2] rS_prior; 
+  vector[2] rS_prior;
   vector[2] dD_prior; 
   
-  //1 0 Flags for which params are fit vs passed 
-  int<lower=0, upper=1> fit_cost;     
-  int<lower=0, upper=1> fit_u;
-  int<lower=0, upper=1> fit_n0;       
-  int<lower=0, upper=1> fit_rFrac;    
-  int<lower=0, upper=1> fit_rS; 
-  int<lower=0, upper=1> fit_K;
-  int<lower=0, upper=1> fit_dD; 
-  
-  // fixed values 
-  real<lower=0> cost_fixed_val;
-  real<lower=0> u_fixed_val;
-  real<lower=0> n0_fixed_val;
-  real<lower=0> rFrac_fixed_val;
-  real<lower=0> rS_fixed_val;
-  real<lower=0> K_fixed_val;
-  real<lower=0> dD_fixed_val;
+  real<lower=0> K_fixed_val;  //carrying capacity, passed to the ODE as data, so it gets no sensitivities
   
   //prior only flag
   int<lower=0, upper=1> prior_only;
@@ -76,29 +57,18 @@ data {
 }
 
 parameters {
-  //make parameters array length 1 if flag is on
-  array[fit_cost] real<lower=0, upper=1> cost_free;
-  array[fit_rFrac] real<lower=0, upper=1> rFrac_free;
-  array[fit_rS] real<lower=0> rS_free;
-  array[fit_n0] real<lower=0, upper=1> n0_free;
+  real<lower=0, upper=1> cost;
+  real<lower=0, upper=1> rFrac;
+  real<lower=0> rS;
+  real<lower=0, upper=1> n0;
   //u = (1 - turnover / (1 - cost)) / n0: the plateau on continuous therapy relative to the starting size. u > 1.2 means progression
-  array[fit_u] real<lower=1, upper= 1 / (fit_n0 ? n0_free[1] : n0_fixed_val)> u_free;
-  //K is bounded below by n0 (fitted or fixed), so the tumour always starts below carrying capacity
-  array[fit_K] real<lower=(fit_n0 ? n0_free[1] : n0_fixed_val)> K_free;
-  array[fit_dD] real<lower=0> dD_free;
+  real<lower=1, upper=1 / n0> u;
+  real<lower=0> dD;
 
   real<lower=0> sigma;
 }
 
 transformed parameters{
- //make params of interest either fixed or 1 dim array declared above if fit flag was passed to Stan
-  real cost = fit_cost ? cost_free[1]: cost_fixed_val;
-  real n0 = fit_n0 ? n0_free[1] : n0_fixed_val;
-  real rFrac = fit_rFrac ? rFrac_free[1] : rFrac_fixed_val;
-  real rS = fit_rS   ? rS_free[1] : rS_fixed_val;
-  real K = fit_K ? K_free[1] : K_fixed_val;
-  real dD = fit_dD ? dD_free[1] : dD_fixed_val;
-  real u = fit_u ? u_free[1] : u_fixed_val;
   real turnover = (1 - cost) * (1 - u * n0);
   //baseline level on the data scale. When not fitted it equals n0, so the model is compared with the data unscaled
 
@@ -113,13 +83,11 @@ transformed parameters{
   y0[2] = rFrac * n0; // R0
   
   //setup theta array for ODE
-  array[6] real theta;
+  array[4] real theta;
   theta[1] = rS;
   theta[2] = dS;
   theta[3] = dD;
   theta[4] = rR;
-  theta[5] = dR;
-  theta[6] = K;
   
   //array to keep track of ODE states. This is needed since there are some rows with treatment switches but no PSA readings. 
   array[n_out] vector[2] ode_states;
@@ -144,7 +112,7 @@ transformed parameters{
     int treatment = treatment_indicator[i];
     
     //solve and store ODE states in right indices
-    ode_states[first_out_time_idx:last_out_time_idx] = ode_rk45(dpop_dt, state_at_start, t_start, output_times[first_out_time_idx:last_out_time_idx], theta, treatment);
+    ode_states[first_out_time_idx:last_out_time_idx] = ode_rk45(dpop_dt, state_at_start, t_start, output_times[first_out_time_idx:last_out_time_idx], theta, K_fixed_val, treatment);
   }
   
   // make new vector the size of PSA obs and get the corresponding ODE solutions
@@ -158,16 +126,12 @@ transformed parameters{
 }
 
 model {
-  //set priors for parameters that are being fitted
-  if (fit_cost) cost_free ~ beta(cost_prior[1], cost_prior[2]);
-  //truncated at 1 from below. The upper bound 1 / n0 is left out of T[] on purpose: it is handled by the declared bound
-  //only, so the joint prior is p(n0) p(u) restricted to u * n0 < 1, as in the generator
-  if (fit_u) u_free[1] ~ lognormal(u_prior[1], u_prior[2]) T[1, ];
-  if (fit_n0) n0_free ~ beta(n0_prior[1], n0_prior[2]);
-  if (fit_rFrac) rFrac_free ~ beta(rFrac_prior[1], rFrac_prior[2]);
-  if (fit_K) K_free ~ lognormal(K_prior[1], K_prior[2]);
-  if (fit_rS) rS_free ~ lognormal(rS_prior[1], rS_prior[2]);
-  if (fit_dD) dD_free ~ lognormal(dD_prior[1], dD_prior[2]);
+  cost ~ beta(cost_prior[1], cost_prior[2]);
+  u ~ lognormal(u_prior[1], u_prior[2]) T[1, ];
+  n0 ~ beta(n0_prior[1], n0_prior[2]);
+  rFrac ~ beta(rFrac_prior[1], rFrac_prior[2]);
+  rS ~ normal(rS_prior[1], rS_prior[2]) T[0, ];
+  dD ~ lognormal(dD_prior[1], dD_prior[2]);
 
   sigma ~ lognormal(sigma_prior[1], sigma_prior[2]);
   
@@ -185,13 +149,12 @@ generated quantities{
   //if flag is on, get log liklihood and prior estimate of making draw
   if (run_diagnostics == 1){
     lprior = lognormal_lpdf(sigma|sigma_prior[1], sigma_prior[2]);
-    if (fit_cost) lprior += beta_lpdf(cost|cost_prior[1], cost_prior[2]);
-    if (fit_u) lprior += lognormal_lpdf(u | u_prior[1], u_prior[2]) - lognormal_lccdf(1 | u_prior[1], u_prior[2]);  //truncated at 1
-    if (fit_n0) lprior += beta_lpdf(n0|n0_prior[1], n0_prior[2]);
-    if (fit_rFrac) lprior += beta_lpdf(rFrac|rFrac_prior[1], rFrac_prior[2]);
-    if (fit_K) lprior += lognormal_lpdf(K | K_prior[1], K_prior[2]);
-    if (fit_rS) lprior += lognormal_lpdf(rS | rS_prior[1], rS_prior[2]);
-    if (fit_dD) lprior += lognormal_lpdf(dD | dD_prior[1], dD_prior[2]);
+    lprior += beta_lpdf(cost|cost_prior[1], cost_prior[2]);
+    lprior += lognormal_lpdf(u | u_prior[1], u_prior[2]) - lognormal_lccdf(1 | u_prior[1], u_prior[2]);  //truncated at 1
+    lprior += beta_lpdf(n0|n0_prior[1], n0_prior[2]);
+    lprior += beta_lpdf(rFrac|rFrac_prior[1], rFrac_prior[2]);
+    lprior += normal_lpdf(rS | rS_prior[1], rS_prior[2]) - normal_lccdf(0 | rS_prior[1], rS_prior[2]);  //truncated at 0
+    lprior += lognormal_lpdf(dD | dD_prior[1], dD_prior[2]);
     // for each observation compute the log likelihood of making that observation, used for model comp and sens analysis
     for (i in 1:n_obs){
       log_lik[i] = lognormal_lpdf(PSA_norm[i] | log(mu[i]), sigma);
