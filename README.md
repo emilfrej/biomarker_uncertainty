@@ -9,7 +9,7 @@ Find out how well we can calculate biomarkers using different scheduling approac
 
 ~~Find out if Stan gets similar param values as biomarker study.~~
 
-Get Stan working on a single patient
+~~Get Stan working on a single patient~~
 
 Simulate hierarchichal stan model 
 
