@@ -41,7 +41,7 @@ $$
 Progression is typically defined as the total cell population exceeding 1.2 times its initial size, that is, when $S+R > 1.2(S_0+R_0)$. However, the ODE can settle into a steady state where the tumor is fully resistant but the total cell population is less than 1.2 times its initial size. We find that we only observe progression under continuous treatment when
 
 $$
-1.2(N_0) < K(1 - \frac{d}{r_R})
+1.2N_0< K(1 - \frac{dD}{r_R})
 $$
 
 #### ODE is solved Treatment segments
@@ -50,11 +50,19 @@ ODE implementation and data wrangling The Lotka-Volterra model is fitted as ODE 
 
 ### Dividing by first PSA measurement
 
-Since the model doesn't inform how much PSA is produced by a certain number of cells, the model can only estimate how the relative distance from carrying capacity by observing growth rates. To remove the scale how much PSA to how tumor from the system, we divide by the first measurement. N0, sets the level but should always more or less equal the first obs. So its rather that
+Since the model doesn't inform how much PSA is produced by a certain number of cells, the model can only estimate how the relative distance from carrying capacity by observing growth rates. To remove the scale how much PSA to how tumor from the system, we divide by the first measurement. N0, sets the level but should always more or less equal the first obs.
 
 ### Using pathfinder for init
 
-Using pathfinder inits was to avoid situations where one chain would fit much slower than the rest.
+Using pathfinder inits was to avoid situations where one chain would fit much slower than the rest.'
+
+### How to truncate a prior in stan
+
+### Hierarchical models
+
+Hierarchical models estimate both at individual level parameters and population effects at the same time. Effectively it is learning the prior over individual estimates. This has regularizing effect, depsite multilevel models. While common in sicence, the assumption that more parameters always increase flexibility thus breaks when it comes to hierarchical models. This is due to shrinkage,indiviudal level estimates are pulled towards the mean depending on how uncertain the inidividual estimate is and the estimated variance between individuals. Single level models either maximally "underfit or overfit". This requires to specify the hierarchical structure as assumptions. Benefits of partial pooling or hieratchical modelling increases when individual level data is information-sparse given the desired inference.
+
+This seems like obvious improvement in patient level fits, it not obvious where parameter estimates should correlate.
 
 ### posterior geometry 
 
@@ -63,6 +71,10 @@ Posterior geometry is problematic even problematic synthetic data even with tigh
 ![](images/clipboard-431430271.png)
 
 Lowering adaptation of the step sizes reduces the amount of divergences, but it comes at the cost of sampling speed and potentially increasing the auto-correlation in drawn samples leading to even further need of more iterations to reach same resolution of the posterior as with more aggressive step sizing.
+
+The problem is that the posterior geometry is degenerate. Banana shapes show that the posterior density or realized likelihood is not uniformly spread around a single point. The more degenerate the geometry, the less accurate frequentist procedures such as MLE uncertainty approximations will be, and the more computation sampling methods will require, potentially an intractable amount. This is because information from one spot doesn't translate well to others. Effectively it is mismatch between available information and inferential goals, we can reparametrize or add information through data or priors. We can either lower the inferential goals or @IdentityCrisis Samplers struggle because they use the current spot to propose new samples, and MLE approximations try to generalise the cost landscape using distributional assumptions.
+
+## 
 
 ## Forward simulation details:
 
