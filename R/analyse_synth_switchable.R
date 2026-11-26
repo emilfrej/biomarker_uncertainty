@@ -24,7 +24,7 @@ recovered <- setdiff(params, "K")
 
 #true values. The notebook simulates with K = 1 but saves the drawn K, so it is overwritten here
 truth <- read_csv(here::here("synth_data/randSynthetic1000Patients.csv"), show_col_types = FALSE, name_repair = "unique_quiet") |>
-  select(patient = PatientId, cost, turnover, n0, rFrac, K, rS, dD = DD, sigma) |>
+  select(patient = PatientId, cost, turnover, n0, rFrac, K, rS, dD, sigma) |>
   filter(patient %in% patients) |>
   mutate(K        = 1,
          AT_score = suppressWarnings(calc_delta_benefit(kappa = .2, dR = turnover * rS, K = K, rR = (1 - cost) * rS, R0 = rFrac * n0)))

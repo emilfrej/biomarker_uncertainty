@@ -48,7 +48,7 @@ According to the supplemental S2.3 the fitted vals were.:
 ```{r}
 ids <- c(12, 20, 25, 78, 85)
 fixed_vals <- c(rS = 0.027, rFrac = 0.00001, cost = 0.1, dD = 1.5, n0 = 1)
-model <- cmdstan_model(here("stan/model_switchable.stan"))
+model <- cmdstan_model("../stan/model_switchable.stan")
 
 fits <- list()
 for (id in ids) {
