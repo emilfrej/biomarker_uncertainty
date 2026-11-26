@@ -12,21 +12,21 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from utils.stan_data import to_stan_prior, make_stan_data, u_init, raw_init, rates_init
+from utils.stan_data import to_stan_prior, make_stan_data, u_init, raw_init, rates_init, rstar_init, turnover_init
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLER_SEED = 4  #seed for pathfinder and sampling in fit_patient
-#Stan file and pathfinder init per --model; all take make_stan_data's data and have the same posterior
+SAMPLER_SEED = 4  
 MODELS = {'u': ('model_switchable_u.stan', u_init), 'raw_jac': ('model_switchable_raw_jac.stan', raw_init),
-          'rates': ('model_switchable_rates.stan', rates_init)}
+          'rates': ('model_switchable_rates.stan', rates_init), 'logstate': ('model_switchable_u_logstate.stan', u_init),
+          'rstar': ('model_switchable_u_rstar.stan', rstar_init), 'turnover': ('model_switchable_u_turnover.stan', turnover_init)}
 
 priorDic = {
     "cost":     stats.beta(2, 5),
-    "u":        stats.lognorm(s=.5, scale=3),
-    "n0":       stats.beta(2, 2),
+    "u":        stats.lognorm(s=.25, scale=2),
+    "n0":       stats.beta(4, 5), 
     "rFrac":    stats.beta(1, 30),
-    "rS":       stats.norm(loc=.027, scale=0.005), 
-    "dD":       stats.lognorm(s=0.3, scale=1.5),
+    "rS":       stats.lognorm(s=0.3, scale=0.027),
+    "dD":       stats.lognorm(s=0.1, scale=1.5),
     'sigma':    stats.lognorm(s=.25, scale=.25),
 }
 
@@ -101,10 +101,10 @@ def fit_all(synth_df, out_dir, stan_model, priorDic, seed=1, overwrite=True, ada
 
 if __name__ == '__main__':
     #e.g. python fit_routine.py --data-dir ../param_recov_u --adapt-delta 0.95 --fits-dir ../param_recov_u/fits_ad95
-    #--model raw_jac / rates fit the same model in the raw ODE parameters / the net growth rates (see MODELS)
+    #--model raw_jac / rates fit the same model in the raw ODE parameters / the net growth rates, logstate solves the ODE in log(S), log(R), rstar / turnover are logstate sampled in u * n0 / turnover (see MODELS)
     #the data come from generate_synth.py
     parser = argparse.ArgumentParser(description='Fit every patient in a synthetic trial with model_switchable_u.stan')
-    parser.add_argument('--model', choices=list(MODELS), default='u', help='u: model_switchable_u.stan, raw_jac: model_switchable_raw_jac.stan, rates: model_switchable_rates.stan')
+    parser.add_argument('--model', choices=list(MODELS), default='u', help='u: model_switchable_u.stan, raw_jac: model_switchable_raw_jac.stan, rates: model_switchable_rates.stan, logstate: model_switchable_u_logstate.stan, rstar: model_switchable_u_rstar.stan, turnover: model_switchable_u_turnover.stan')
     parser.add_argument('--data-dir', type=Path, default=ROOT / 'synth_data_u', help='folder with synth_patients.csv')
     parser.add_argument('--adapt-delta', type=float, default=0.8)
     parser.add_argument('--fits-dir', type=Path, default=None, help='folder for the fits, default <data-dir>/fits')

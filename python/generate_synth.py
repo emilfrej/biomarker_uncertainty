@@ -23,4 +23,4 @@ if __name__ == '__main__':
     if out_dir.exists() and not args.overwrite:
         parser.error(f'{out_dir} already exists; pass --overwrite to delete and recreate it')
     np.random.seed(args.seed)  #generate_u_patients draws from the global numpy RNG
-    generate_u_patients(priorDic, n_patients=args.n, out_dir=out_dir, progression=args.progression)
+    generate_u_patients(priorDic, n_patients=args.n, out_dir=out_dir, progression=args.progression, check_progression=False)

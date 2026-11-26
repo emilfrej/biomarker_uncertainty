@@ -130,7 +130,7 @@ model {
   u ~ lognormal(u_prior[1], u_prior[2]) T[1, ];
   n0 ~ beta(n0_prior[1], n0_prior[2]);
   rFrac ~ beta(rFrac_prior[1], rFrac_prior[2]);
-  rS ~ normal(rS_prior[1], rS_prior[2]) T[0, ];
+  rS ~ lognormal(rS_prior[1], rS_prior[2]);
   dD ~ lognormal(dD_prior[1], dD_prior[2]);
 
   sigma ~ lognormal(sigma_prior[1], sigma_prior[2]);
@@ -153,7 +153,7 @@ generated quantities{
     lprior += lognormal_lpdf(u | u_prior[1], u_prior[2]) - lognormal_lccdf(1 | u_prior[1], u_prior[2]);  //truncated at 1
     lprior += beta_lpdf(n0|n0_prior[1], n0_prior[2]);
     lprior += beta_lpdf(rFrac|rFrac_prior[1], rFrac_prior[2]);
-    lprior += normal_lpdf(rS | rS_prior[1], rS_prior[2]) - normal_lccdf(0 | rS_prior[1], rS_prior[2]);  //truncated at 0
+    lprior += lognormal_lpdf(rS | rS_prior[1], rS_prior[2]);
     lprior += lognormal_lpdf(dD | dD_prior[1], dD_prior[2]);
     // for each observation compute the log likelihood of making that observation, used for model comp and sens analysis
     for (i in 1:n_obs){

@@ -28,6 +28,18 @@ def u_init(priorDic, rng):
             return init
 
 
+def rstar_init(priorDic, rng):
+    """u_init's draw with rstar = u * n0 in place of u, for model_switchable_u_rstar.stan"""
+    i = u_init(priorDic, rng)
+    return {**{k: v for k, v in i.items() if k != 'u'}, 'rstar': i['u'] * i['n0']}
+
+
+def turnover_init(priorDic, rng):
+    """u_init's draw with turnover = (1 - cost)(1 - u * n0) in place of u, for model_switchable_u_turnover.stan"""
+    i = u_init(priorDic, rng)
+    return {**{k: v for k, v in i.items() if k != 'u'}, 'turnover': (1 - i['cost']) * (1 - i['u'] * i['n0'])}
+
+
 def raw_init(priorDic, rng):
     """u_init's draw converted to model_switchable_raw_jac.stan's raw ODE parameters (rS, rR, d, S0, R0, dD, sigma)"""
     i = u_init(priorDic, rng)
