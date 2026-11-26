@@ -53,3 +53,9 @@ bruchovsky_u/
 nuts_80/
 synth_data_*_prog/
 experiments/*/out/
+
+images/
+.claude/
+.agents/
+skills-lock.json
+CLAUDE.md
