@@ -52,9 +52,10 @@ zhang_u/
 bruchovsky_u/
 nuts_80/
 synth_data_*_prog/
-experiments/*/out/
+experiments/
 
-.claude/
+.claude*
 .agents/
 skills-lock.json
-CLAUDE.md
+CLAUDE*.md
+.mcp.json
