@@ -54,8 +54,6 @@ nuts_80/
 synth_data_*_prog/
 experiments/*/out/
 
-images/*
-!images/clipboard-431430271.png
 .claude/
 .agents/
 skills-lock.json
