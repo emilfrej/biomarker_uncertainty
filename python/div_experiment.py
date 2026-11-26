@@ -12,7 +12,7 @@ from utils.fit_diagnostics import diagnose_fits
 
 N = 100
 FIT = ['logstate', 'turnover']  
-REGENERATE = True  
+REGENERATE = False  
 REFIT = False  
 ADAPT_DELTA = 0.95  
 DIAGNOSE = True  
@@ -39,7 +39,7 @@ if __name__ == '__main__':
         else:
             stan_file, init = MODELS[model]
             fit_all(synth_df, fits_dir, cmdstanpy.CmdStanModel(stan_file=ROOT / 'stan' / stan_file), priorDic, seed=1, init=init,
-                    adapt_delta=ADAPT_DELTA)
+                    adapt_delta=ADAPT_DELTA, save_warmup=True, save_latent_dynamics=True) 
         #also for fits that existed: diagnostics.csv, diagnostics/ and pairs/ are deleted and redrawn
         if DIAGNOSE or PAIRS:
             print(f'diagnosing {model}')
